@@ -7,6 +7,9 @@ MuPIF openvpn-monitor is a simple python program to generate html that displays 
 status of MuPIF platform infrastructure, including status of VPN network, nameserver and all JobManagers. It allows also web based management of platform components. It is based on OpenVPN monitor (https://github.com/furlongm/openvpn-monitor), extended to provide additional info about MuPIF platform infrastructure. It typically runs on the same host as the OpenVPN
 server, however it does not necessarily need to.
 
+[![](http://mupif.org/lib/exe/fetch.php?media=wiki:images:mupif_openvpn_status_monitor_-_google_chrome_265.png)](http://mupif.org/lib/exe/fetch.php?media=wiki:images:mupif_openvpn_status_monitor_-_google_chrome_265.png)
+
+
 ## Source
 
 The current source code is available on github:
