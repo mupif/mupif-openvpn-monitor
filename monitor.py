@@ -46,6 +46,8 @@ Pyro4.config.SERIALIZER="pickle"
 Pyro4.config.PICKLE_PROTOCOL_VERSION=2 #to work with python 2.x and 3.x
 Pyro4.config.SERIALIZERS_ACCEPTED={'pickle'}
 Pyro4.config.SERVERTYPE="multiplex"
+Pyro4.config.COMMTIMEOUT = 1.5      # 1.5 seconds
+
 
 # to be decoded from session_id, if provided
 userid = ""
