@@ -83,6 +83,8 @@ def get_date(date_string, uts=False):
 def get_str(s):
     if sys.version_info[0] == 2 and s is not None:
         return s.decode('ISO-8859-1')
+    elif s is not None:
+        return s.encode('ascii', 'xmlcharrefreplace').decode('utf-8')
     else:
         return s
 
@@ -545,7 +547,7 @@ class OpenvpnMgmtInterface(object):
                     except SystemError:
                         gir = None
                     if gir is not None:
-                        session['location'] = gir['country_code']
+                        session['location'] = get_str(gir['country_code'])
                         session['city'] = get_str(gir['city'])
                         session['country_name'] = gir['country_name']
                         session['longitude'] = gir['longitude']
