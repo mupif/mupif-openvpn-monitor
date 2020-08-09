@@ -1,6 +1,5 @@
-#!/usr/bin/python
+#!/usr/local/anaconda3/bin/python3
 # -*- coding: utf-8 -*-
-##huhu
 # Licensed under GPL v3
 # Copyright 2011 VPAC <http://www.vpac.org>
 # Copyright 2012-2016 Marcus Furlong <furlongm@gmail.com>
@@ -37,6 +36,18 @@ from semantic_version import Version as semver
 import Pyro4
 import login
 
+import threading
+
+from datetime import datetime 
+
+import json, requests
+from keycloak import KeycloakOpenID
+import keycloak
+#from bottle import run, template, request, route, redirect
+#from bottle import response, get, post, static_file, default_app
+
+from mupif import PyroUtil
+
 if sys.version_info[0] == 2:
     reload(sys)
     sys.setdefaultencoding('utf-8')
@@ -46,7 +57,7 @@ Pyro4.config.SERIALIZER="pickle"
 Pyro4.config.PICKLE_PROTOCOL_VERSION=2 #to work with python 2.x and 3.x
 Pyro4.config.SERIALIZERS_ACCEPTED={'pickle'}
 Pyro4.config.SERVERTYPE="multiplex"
-Pyro4.config.COMMTIMEOUT = 1.5      # 1.5 seconds
+Pyro4.config.COMMTIMEOUT = 0.3      # 1.5 seconds
 
 
 # to be decoded from session_id, if provided
@@ -88,6 +99,8 @@ def get_str(s):
     else:
         return s
 
+        
+    
 
 class ConfigLoader(object):
 
@@ -191,12 +204,14 @@ class MupifConfigLoader(object):
                 # self.parse_jobman_section(config, section)
 
     def load_default_settings(self):
-        info('Using default settings => localhost:5555')
+        info('Using default settings')
         self.mupif = {'nameserver_ip': '172.30.0.1',
-                      'nameserver_port': '9090'}
+                      'nameserver_port': '9090',
+                      'mupifdb_ip': '172.30.0.1', # mupifDB rest API
+                      'mupifdb_port': '5000'}
 
     def parse_mupif_section(self, config):
-        global_vars = ['nameserver_ip', 'nameserver_port', 'hmac_key']
+        global_vars = ['nameserver_ip', 'nameserver_port', 'hmac_key', 'mupifdb_ip', 'mupifdb_port']
         for var in global_vars:
             try:
                 self.mupif[var] = config.get('mupif', var)
@@ -240,43 +255,82 @@ class mupifMonitor(object):
                     self.collect_jobman_data(jobman)
         else:
             self.jobmans={}
-            # collect all registered jobmans form nameserver using jobman metadata tag
+            # collect all registered jobmans from nameserver using jobman metadata tag
             if (self.ns):
                 query = self.ns.list(metadata_any={"type:jobmanager"})
                 info(query)
+                threads = []
+                start = datetime.now()
                 for name, uri in query.items():
                     self.jobmans[name] = {}
                     jobmanRec=self.jobmans[name];
                     jobmanRec['uri']=uri
-                    self.collect_jobman_data(name, uri, jobmanRec)
-                    #info("Found: %s[%s]"%(name,uri))
+                    #self.collect_jobman_data(name, uri, jobmanRec)
+                    thread = threading.Thread(target=self.collect_jobman_data, args=(name, uri, jobmanRec))
+                    threads.append(thread)                   
+                
+                for t in threads:
+                    t.start()
+
+                for t in threads:
+                    t.join()
+                
+                end = datetime.now()
+                #print ("Request time: %s"%str(end-start))
 
     def collect_data(self):
+        #print('collect_data called')
+        #print (str(self.cfg))
         self.ns_socket_connect(self.cfg['nameserver_ip'], self.cfg['nameserver_port'], self.cfg['hmac_key'])
+        try:
+            #print("Querying mupifDB status:\n")
+            #print ('http://'+self.cfg['mupifdb_ip']+":"+self.cfg['mupifdb_port']+'/status')
+            r=requests.get('http://'+self.cfg['mupifdb_ip']+":"+self.cfg['mupifdb_port']+'/status')
+            #print("url:",  r.url)
+            #print("Text:", r.text)
+            status=r.json()
+            #print(status)
+            
+            self.cfg['mupifdb_status'] = status['result'][0]
+        except:
+            self.cfg['mupifdb_status'] = {}
+            
+        
+        
 
     def collect_jobman_data(self, name, uri, jobmanRec):
 
+        s = datetime.now()
+        hmackey = self.cfg['hmac_key'].encode(encoding='UTF-8')
 
         jobmanRec['status']='Failed'
         jobmanRec['note']=''
         jobmanRec['numberofrunningjobs']=''
+        jobmanRec['showJobs'] = 'ON'
         try:
+            
             j = Pyro4.Proxy(uri)
+            j._pyroHmacKey = hmackey
+
             sig=j.getApplicationSignature()
+            status = j.getStatus()
+            #sig = 'KO'
+
             jobmanRec['status']="OK"
             jobmanRec['note']=sig
-        except:
-            jobmanRec['note']="Cannot connect to jobManager %s"%name
-            return
-
-        # get jobmanager status
-        try:
-            status = j.getStatus()
-            info(status)
+            
+            #status = j.getStatus()
+            
+            #info(status)
+            #print(status)
             jobmanRec['numberofrunningjobs']=len(status)
-        except:
+                                                             
+
+        except Pyro4.errors.CommunicationError:
             jobmanRec['note']="Cannot connect to jobManager %s"%name
-            return
+            
+        jobmanRec['note']+="["+str(datetime.now()-s)+"]"
+        return
 
 
     def ns_socket_connect(self, nshost, nsport, nskey):
@@ -612,8 +666,9 @@ class OpenvpnHtmlPrinter(object):
                 self.print_unavailable_vpn(vpn)
         self.print_mupif_status(self.mupif_monitor)
         if self.maps:
-            self.print_maps_html()
+            self.print_maps_html(self.mupif_monitor)
             self.print_html_footer()
+
 
     def init_vars(self, settings, monitor, mupifMon):
 
@@ -649,32 +704,111 @@ class OpenvpnHtmlPrinter(object):
         output('<!doctype html>')
         output('<html><head>')
         output('<meta charset="utf-8">')
-        output('<meta http-equiv="X-UA-Compatible" content="IE=edge">')
         output('<meta name="viewport" content="width=device-width, initial-scale=1">')
         output('<title>{0!s} OpenVPN Status Monitor</title>'.format(self.site))
         output('<meta http-equiv="refresh" content="300" />')
 
+        
+        output('<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.0/css/bootstrap.min.css">')       
+        output('<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>')
+        output('<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.0/js/bootstrap.min.js"></script>')
+        output('<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.31.1/js/jquery.tablesorter.js"></script>')
+        output('<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.31.1/js/jquery.tablesorter.widgets.js"></script>')
+        
+
+
         # css
-        output('<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous" />')
-        output('<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap-theme.min.css" integrity="sha384-rHyoN1iRsVXV4nD0JutlnGaslCJuC7uwjduW9SVrLvRYooPp2bWYgmgJQIXwl/Sp" crossorigin="anonymous" />')
-        output('<link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.28.4/css/theme.bootstrap.min.css" integrity="sha256-cerl+DYHeG2ZhV/9iueb8E+s7rubli1gsnKuMbKDvho=" crossorigin="anonymous" />')
+#        output('<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous" />')
+#        output('<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap-theme.min.css" integrity="sha384-rHyoN1iRsVXV4nD0JutlnGaslCJuC7uwjduW9SVrLvRYooPp2bWYgmgJQIXwl/Sp" crossorigin="anonymous" />')
+#        output('<link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.28.4/css/theme.bootstrap.min.css" integrity="sha256-cerl+DYHeG2ZhV/9iueb8E+s7rubli1gsnKuMbKDvho=" crossorigin="anonymous" />')
         if self.maps:
             output('<link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/leaflet/1.0.2/leaflet.css" integrity="sha256-9mfj77orHLh2GsN7CbMvpjO/Wny/ZZhR7Pu7hy0Yig4=" crossorigin="anonymous" />')
-
-        # js
-        output('<script src="//cdnjs.cloudflare.com/ajax/libs/jquery/3.1.1/jquery.min.js" integrity="sha256-hVVnYaiADRTO2PzUGmuLJr8BLUSjGIZsDYGmIJLv2b8=" crossorigin="anonymous"></script>')
-        output('<script src="//cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.28.4/js/jquery.tablesorter.min.js" integrity="sha256-etMCBAdNUB2TBSMUe3GISzr+drx6+BjwAt9T3qjO2xk=" crossorigin="anonymous"></script>')
-        output('<script src="//cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.28.4/js/jquery.tablesorter.widgets.min.js" integrity="sha256-29n48bNY/veiCp3sAG1xntm9MdMT5+IuZNpeJtV/xEg=" crossorigin="anonymous"></script>')
-        output('<script src="//cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.28.4/js/parsers/parser-network.min.js" integrity="sha256-E0X65/rdWP806UYOzvOzTshT6a3R74j/9UOqcB9+6lc=" crossorigin="anonymous"></script>')
-        output('<script src="//maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js" integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa" crossorigin="anonymous"></script>')
-        output('<script>$(document).ready(function(){')
-        output('$("#sessions").tablesorter({theme:"bootstrap", headerTemplate:"{content} {icon}", widgets:["uitheme"]});')
-        output('});</script>')
-        if self.maps:
             output('<script src="//cdnjs.cloudflare.com/ajax/libs/leaflet/1.0.2/leaflet.js" integrity="sha256-RS5bDpN9YmmUIdtdu8ESPjNp1Bg/Fqu90PwN3uawdSQ=" crossorigin="anonymous"></script>')
 
-        output('</head><body>')
+            #output('var List0_Icon = L.icon({')
+            #output('                    iconUrl: \'/images/logos/template.png\',')
+            #output('')
+            #output('                    iconSize:     [38, 95], // size of the icon')
+            #output('                    iconAnchor:   [22, 94], // point of the icon which will correspond to marker\'s location')
+            #output('                    popupAnchor:  [-3, -76] // point from which the popup should open relative to the iconAnchor')
+            #output('                    });')
 
+
+            
+        
+        output('</head><body>')
+        ############local storage
+        output('<script>')
+        #        output('$(document).ready(()=>{console.log(localStorage.panels)});')
+        output('$(document).ready(()=>{')
+        output('$(".panel .panel-collapse").on("shown.bs.collapse", function ()')
+        output('{')
+        output('var active = $(this).attr(\'id\');')
+        output('console.log(active);')
+        output('var panels= localStorage.panels === undefined ? new Array() : JSON.parse(localStorage.panels);')
+        output('if ($.inArray(active,panels)==-1) //check that the element is not in the array')
+        output('panels.push(active);')
+        output('localStorage.panels=JSON.stringify(panels);')
+        output('});')
+        
+
+        output('$(".collapse").on(\'hidden.bs.collapse\', function ()')
+        output('{')
+        output('var active = $(this).attr(\'id\');')
+        output('var panels= localStorage.panels === undefined ? new Array() : JSON.parse(localStorage.panels);')
+        output('var elementIndex=$.inArray(active,panels);')
+        output('if (elementIndex!==-1) //check the array')
+        output('{')
+        output('panels.splice(elementIndex,1); //remove item from array')
+        output('}')
+        output('localStorage.panels=JSON.stringify(panels); //save array on localStorage')
+        output('});')
+
+        output('var panels=localStorage.panels === undefined ? new Array() : JSON.parse(localStorage.panels); //get all panels')
+        output('for (var i in panels){ //<-- panel is the name of the cookie')
+        output('if ($("#"+panels[i]).hasClass(\'panel-collapse\')) // check if this is a panel')
+        output('{')
+        output('$("#"+panels[i]).collapse("show");')
+        output('}')
+        output('}')
+
+
+        output('$("#searchVpnTable").on("keyup", function() {')
+        output('var value = $(this).val().toLowerCase();')
+        output('$("#vpnSessions tbody").children(\'tr\').filter(function() {')
+        output('$(this).toggle($(this).text().toLowerCase().indexOf(value) > -1)')
+        output('});')
+        output('});')
+
+
+
+        output('$("#searchJobManTable").on("keyup", function() {')
+        output('var value = $(this).val().toLowerCase();')
+        output('$("#jobManSessions tbody").children(\'tr\').filter(function() {')
+        output('$(this).toggle($(this).text().toLowerCase().indexOf(value) > -1)')
+        output('});')
+        output('});')
+
+        
+        output('$("#vpnSessions").tablesorter();')
+        output('$("#jobManSessions").tablesorter();')
+
+
+
+
+
+
+
+        
+        #end of document ready
+        output('});')
+        output('</script>')
+
+
+
+
+
+        
         output('<nav class="navbar navbar-inverse">')
         output('<div class="container-fluid">')
         output('<div class="navbar-header">')
@@ -694,6 +828,12 @@ class OpenvpnHtmlPrinter(object):
         output('<span class="caret"></span></a>')
         output('<ul class="dropdown-menu">')
 
+
+
+        
+
+
+        
         for key, vpn in self.vpns:
             if vpn['name']:
                 anchor = vpn['name'].lower().replace(' ', '_')
@@ -706,12 +846,58 @@ class OpenvpnHtmlPrinter(object):
         # if session_key defined
         # display user + logout
         # else display login
-
+        keycloak_conf = json.loads(open('keycloak.json').read())
         global userid
+        keycloak_openid = KeycloakOpenID(server_url=keycloak_conf['auth-server-url'] + "/", realm_name=keycloak_conf['realm'],client_id=keycloak_conf['resource'],client_secret_key=keycloak_conf['credentials']['secret'])
+        #config_well_know = keycloak_openid.well_know()
+        #print(config_well_know)
+        #print(sys.argv)
+        arguments = cgi.FieldStorage()
+        if ('code' in arguments):
+            code = arguments.getvalue('code')
+            #print(code)
+            #print('-----------------------------------------------')
+            token = keycloak_openid.token(grant_type="authorization_code", code=code, redirect_uri="http://mech2018.fsv.cvut.cz/mupif/openvpn-monitor2/monitor.py")
+            #token = keycloak_openid.token(grant_type="authorization_code", code=code, redirect_uri="http://172.30.0.1/mupif/openvpn-monitor2/monitor.py")
+            userinfo = keycloak_openid.userinfo(token['access_token'])
+            userid = userinfo['preferred_username']
+            #print(userid)
+        else:
+            login_url = keycloak_openid.auth_url("http://mech2018.fsv.cvut.cz/mupif/openvpn-monitor2/monitor.py")
+            #login_url = keycloak_openid.auth_url("http://172.30.0.1/mupif/openvpn-monitor2/monitor.py")
+            #print ('<br> Welcome Anonymous !')
+            #print ('<a href="'+login_url+'"> Login here </a>')
+            #print ('<br>')
+            
+            #userinfo = keycloak_openid.userinfo(token['access_token'])
+
+
+
+
+        
+        #try:
+        #    token = keycloak_openid.token('user', 'password')
+        #except keycloak.exceptions.KeycloakAuthenticationError:
+        #    userid = ''
+        #token = keycloak_openid.token("user", "password", totp="012345")
+        #token = keycloak_openid.token(grant_type="authorization_code", code=code)
+
+#        if 'code' in request.query.keys():
+#            code = request.query['code']
+            # Get WellKnow
+
+        # Get Token
+        #token = keycloak_openid.token("user", "password")
+        # Get Userinfo
+        
+
+
+        
         if (userid):
             output('<li><a>Logged in as '+userid+' | Logout</a></li>')
         else:
-            output('<li><a href="login.py">login</a></li>')
+            print ('<li><a href="'+login_url+'"> Login</a></li>')
+            #output('<li><a href="login.py">Login</a></li>')
 
         output('</ul>')
 
@@ -740,7 +926,8 @@ class OpenvpnHtmlPrinter(object):
         elif vpn_mode == 'Server':
             headers = server_headers
 
-        output('<table id="sessions" class="table table-striped table-bordered ')
+        output('<input class="form-control" id="searchVpnTable" type="text" placeholder="Search..">')
+        output('<table id="vpnSessions" class="table table-striped table-bordered tablesorter')
         output('table-hover table-condensed table-responsive ')
         output('tablesorter tablesorter-bootstrap">')
         output('<thead><tr>')
@@ -766,6 +953,7 @@ class OpenvpnHtmlPrinter(object):
 
     def print_vpn(self, vpn_id, vpn):
 
+
         if vpn['state']['success'] == 'SUCCESS':
             pingable = 'Yes'
         else:
@@ -782,13 +970,20 @@ class OpenvpnHtmlPrinter(object):
         up_since = vpn['state']['up_since']
         show_disconnect = vpn['show_disconnect']
 
+
         anchor = vpn['name'].lower().replace(' ', '_')
-        output('<div class="panel panel-success" id="{0!s}">'.format(anchor))
-        output('<div class="panel-heading"><h3 class="panel-title">{0!s}</h3>'.format(
-            vpn['name']))
-        output('</div><div class="panel-body">')
-        output('<table class="table table-condensed table-responsive">')
-        output('<thead><tr><th>VPN Mode</th><th>Status</th><th>Pingable</th>')
+        #output('<div class="panel panel-success" id="{0!s}">'.format(anchor))
+
+
+        output('<div class="panel panel-info">')
+        output('      <div data-toggle="collapse" class="panel-heading text-center"  data-target="#VPNStatusPanel" class="panel-heading collapsed" >')
+        output('          <div class="panel-title">Composelector VPN</div>')
+        output('     </div>')        
+        output('     <div id="VPNStatusPanel" class="panel-collapse collapse">')
+
+          
+        output('<table id = "vpnTable" class="table table-condensed table-responsive">')
+        output('<thead><tr><th id="mode">VPN Mode</th><th mode = "status">Status</th><th>Pingable</th>')
         output('<th>Clients</th><th>Total Bytes In</th><th>Total Bytes Out</th>')
         output('<th>Up Since</th><th>Local IP Address</th>')
         if vpn_mode == 'Client':
@@ -802,6 +997,7 @@ class OpenvpnHtmlPrinter(object):
         output('<td>{0!s} ({1!s})</td>'.format(bytesout, naturalsize(bytesout, binary=True)))
         output('<td>{0!s}</td>'.format(up_since.strftime(self.datetime_format)))
         output('<td>{0!s}</td>'.format(local_ip))
+
         if vpn_mode == 'Client':
             output('<td>{0!s}</td>'.format(remote_ip))
         output('</tr></tbody></table>')
@@ -815,43 +1011,201 @@ class OpenvpnHtmlPrinter(object):
         output('</div></div>')
 
 
+
+#        output('<div class="panel panel-default">')
+#        output('<div data-toggle="collapse" data-target="#panel2" class="panel-heading collapsed">')
+#        output('<h4 class="panel-title">')
+#        output('<a> Panel 2 </a>')
+#        output('</h4>')
+#        output('</div>')
+#        output('<div id="panel2" class="panel-collapse collapse">')
+#        output('<div class="panel-body">')
+#        output('</div>')
+#        output('</div>')
+#        output('</div>')
+
+
+
+
     @staticmethod
     def print_mupif_status(mupif_monitor):
+        #print (str(mupif_monitor.cfg))
         ns_ip = mupif_monitor.cfg['nameserver_ip']
         ns_port = mupif_monitor.cfg['nameserver_port']
         ns_status = mupif_monitor.cfg['ns_status']
         ns_note = mupif_monitor.cfg['error']
 
-        output('<div class="panel panel-info"><div class="panel-heading">')
-        output('<h3 class="panel-title">MuPIF Status</h3></div><div class="panel-body">')
-
+        mupifdb_ip = mupif_monitor.cfg['mupifdb_ip']
+        mupifdb_port = '' # mupif_monitor.cfg['mupifdb_port']
+        mupifdb_status = mupif_monitor.cfg['mupifdb_status'].get('mupifDBStatus', "Failed")
+        mupifdbscheduler_status = mupif_monitor.cfg['mupifdb_status'].get('schedulerStatus', "Failed")
         
-        output('<table id="Nameserver" class="table table-stripped table-bordered">')
-        output('<thead><tr><th>nameserver IP</th><th>nameserver port</th><th>Status</th><th>Note</th></tr></thead>')
-        output('<tbody>')
+        
+        
+
+
+        json_file = open('userGroup_2_userID.json', 'r')
+        json_str = json_file.read()
+        userGroup_2_userID = json.loads(json_str)[0]
+        userGroup = 'None'
+        for key in userGroup_2_userID:
+            userID = key
+            if userID == userid:
+                userGroup = userGroup_2_userID.get(userID)
+
+        print(userGroup)
+
+            
+
+
+        output('<div class="panel panel-info">')
+        output('      <div data-toggle="collapse" class="panel-heading text-center"  data-target="#MupifStatusPanel" class="panel-heading collapsed" >')
+#        output('          <button class="glyphicon glyphicon-plus-sign pull-left" data-toggle="collapse" data-target="#MupifStatusPanel"></button>')
+        output('          <div class="panel-title">MuPIF Status</div>')
+        output('     </div>')
+        output('     <div id="MupifStatusPanel" class="panel-collapse collapse">')
+        
+        output('      <p>')
+        ##### small nameserver table
+        output('      <table id="Mupif-Components" class="table table-stripped table-bordered">')
+        output('           <thead><tr><th>Component</th><th>IP</th><th>port</th><th>Status</th><th>Note</th></tr></thead>')
+        output('           <tbody>')
         if (ns_status == "OK"):
             trclass = "success"
         else:
             trclass = "danger"
-        output('<tr"><td>{0!s}</td><td>{1!s}</td><td class="{4!s}">{2!s}</td><td>{3!s}</td></tr>'.format(ns_ip, ns_port, ns_status, ns_note, trclass))            
-        output('</tr></thead><tbody></table>')
+        output('               <tr"><td>Nameserver</td><td>{0!s}</td><td>{1!s}</td><td class="{4!s}">{2!s}</td><td>{3!s}</td></tr>'.format(ns_ip, ns_port, ns_status, ns_note, trclass))
+        if (mupifdb_status == "OK"):
+            trclass = "success"
+        else:
+            trclass = "danger"
+                               
+        output('               <tr"><td>MupifDB</td><td>{0!s}</td><td>{1!s}</td><td class="{4!s}">{2!s}</td><td>{3!s}</td></tr>'.format(mupifdb_ip, mupifdb_port, mupifdb_status, "", trclass))
 
-        output('<table id="jobmans" class="table table-stripped table-bordered table-condensed table-hover table-responsive">')
-        output('<thead><tr><th>JobManager ID</th><th>Signature</th><th>URI</th><th>Running jobs</th><th>Status</th></tr></thead>')
-        output('<tbody>')
+        if (mupifdbscheduler_status == "OK"):
+            trclass = "success"
+        else:
+            trclass = "danger"
+        output('               <tr"><td>MupifDB Scheduler</td><td>{0!s}</td><td>{1!s}</td><td class="{4!s}">{2!s}</td><td>{3!s}</td></tr>'.format("", "", mupifdbscheduler_status, str(mupif_monitor.cfg['mupifdb_status'].get('mupifDBSchedulerStatus', "")), trclass))
+                        
+        
+        output('               </tr>')
+        output('           </tbody>')
+        output('      </table>')
+        output('      </p>')
 
+
+        ### table for job managers
+        output('<input class="form-control" id="searchJobManTable" type="text" placeholder="Search..">')
+        output('      <table id="jobManSessions" class="table table-striped table-bordered tablesorter')
+        output('       table-hover table-condensed table-responsive ')
+        output('       tablesorter tablesorter-bootstrap">')
+        output('         <thead>')
+        output('             <tr><th></th><th id ="id">JobManager ID</th><th>Signature</th><th>URI</th><th>Running jobs</th><th>Status</th><th></th></tr>')
+        output('         </thead>')
+        output('         <tbody>')
+        index = 0
         for name, jobman in mupif_monitor.jobmans.items():
             if (jobman['status'] == "OK"):
                 trclass = "success"
             else:
-                trclass = "warning"                    
-            output('<tr><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td><td class="{5!s}">{4!s}</td></tr>'.format(name, jobman['note'], jobman['uri'], jobman['numberofrunningjobs'], jobman['status'], trclass)) 
-        output('</tr></thead><tbody></table>')                                   
-        
-        output('</tr></thead><tbody></table>')
+                trclass = "warning"
+                #@todo: check the rights for each job man and show the delte button if appropriate
+            #print(jobman['note'])
+            #print(jobman['numberofrunningjobs'])
+            if(jobman['status'] == "OK" and jobman['numberofrunningjobs'] > 0):
+                index = index+1
+                if(userGroup == name or userGroup == 'CTU' ):
+                    output('     <tr class = "tablesorter"> <td> <button id="button" type="button" class="btn btn-primary" data-toggle="collapse" data-target="#collapseme_{6!s}"><span class="glyphicon glyphicon-plus"></button></td><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td><td class="{5!s}">{4!s}</td><td><a class = "button" href="delete_jm.py?jobManName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(name, jobman['note'], jobman['uri'], jobman['numberofrunningjobs'], jobman['status'], trclass, index))
+                else:
+                    output('     <tr class = "tablesorter"> <td> <button id="button" type="button" class="btn btn-primary" data-toggle="collapse" data-target="#collapseme_{6!s}"><span class="glyphicon glyphicon-plus"></button></td><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td><td class="{5!s}">{4!s}</td></tr>'.format(name, jobman['note'], jobman['uri'], jobman['numberofrunningjobs'], jobman['status'], trclass, index))
+
+                jobMan = PyroUtil.connectJobManager(mupif_monitor.ns, name, 'mupif-secret-key')
+                ##jobMan.terminateJob('27@Abaqus@Mupif.LIST')
+
+                output('<tr class= "tablesorter-childRow">')
+                output('      <td></td>')
+                output('      <td colspan = "6" align = "center">')
+                #output('<td><div class="collapse out" id="collapseme_{0!s}">Should be collapsed</div></td></tr>'.format(index))
+                output('<div class="collapse out" id="collapseme_{0!s}">'.format(index))
+                #####
+                output('        <table id = "JobTable{0!s}" class="table table-borderless">'.format(index))
+                output('<thead><tr><th>Job ID</th><th>Port</th><th>User@host</th><th>Running time</th></thead>')
+
+                status = jobMan.getStatus()
+                for rec in status:
+
+                    jobid = rec[0]
+                    #print(jobid)
+                    port = (rec[3])
+                    user = rec[2]
+                    mins = rec[1]//60
+                    hrs  = mins//24
+                    mins = mins%60
+                    sec  = int(rec[1])%60
+                    jobtime = "%02d:%02d:%02d"%(hrs, mins, sec)
+                    if(userGroup == name or userGroup == "CTU" ):
+                        output('<tr><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td></td><td><a class = "button" href="deleteJM.py?jobManName={4!s}&jobName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(jobid, port, user, jobtime, name))
+
+                    else:
+                        output('<tr><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td></td></tr>'.format(jobid, port, user, jobtime, name, trclass))
+
+                output('</table>')
+                output(' </div></tr>')
+
+            ### There are no jobs
+            else:
+                if(userGroup == name or userGroup == "CTU"):
+                    output('<tr><td></td><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td><td class="{5!s}">{4!s}</td><td><a class = "button" href="delete_jm.py?jobManName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(name, jobman['note'], jobman['uri'], jobman['numberofrunningjobs'], jobman['status'], trclass))
+                else:
+                    output('<tr><td></td><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td><td class="{5!s}">{4!s}</td></tr>'.format(name, jobman['note'], jobman['uri'], jobman['numberofrunningjobs'], jobman['status'], trclass))
+
+                    
+        output('</tbody></table>')
+
+
+
         output('</div></div>')
 
 
+        
+
+       #output('<div>')
+       # output('<a class="btn btn-primary" data-toggle="collapse" href="#multiCollapseExample1" role="button" aria-expanded="false"')
+       # output('aria-controls="multiCollapseExample1">Toggle first element</a>')
+       # output('<button class="btn btn-primary" type="button" data-toggle="collapse" data-target="#multiCollapseExample2"')
+       # output('aria-expanded="false" aria-controls="multiCollapseExample2">Toggle second element</button>')
+       # output('<button class="btn btn-primary" type="button" data-toggle="collapse" data-target=".multi-collapse"')
+       # output('aria-expanded="false" aria-controls="multiCollapseExample1 multiCollapseExample2">Toggle both elements</button>')
+       # output('</div>')
+       # output('<!--/ Collapse buttons -->')
+       # output('<!-- Collapsible content -->')
+       # output('<div class="row">')
+       # output('<div class="col">')
+       # output('<div class="collapse multi-collapse" id="multiCollapseExample1">')
+       # output('<div class="card card-body">')
+       # output('Anim pariatur cliche reprehenderit, enim eiusmod high life accusamus terry richardson ad squid. Nihil')
+       # output('anim keffiyeh helvetica, craft beer labore wes anderson cred nesciunt sapiente ea proident.')
+       # output('</div>')
+       # output('</div>')
+       # output('</div>')
+       # output('<div class="col">')
+       # output('<div class="collapse multi-collapse" id="multiCollapseExample2">')
+       # output('<div class="card card-body">')
+       # output('Anim pariatur cliche reprehenderit, enim eiusmod high life accusamus terry richardson ad squid. Nihil')
+       # output('anim keffiyeh helvetica, craft beer labore wes anderson cred nesciunt sapiente ea proident.')
+       # output('</div>')
+       # output('</div>')
+       # output('</div>')
+       # output('</div>')
+       # output('<!--/ Collapsible content -->')
+
+
+
+
+
+
+        
 
     @staticmethod
     def print_client_session(session):
@@ -922,9 +1276,15 @@ class OpenvpnHtmlPrinter(object):
                 self.print_server_session(vpn_id, session, show_disconnect)
             output('</tr>')
 
-    def print_maps_html(self):
-        output('<div class="panel panel-info"><div class="panel-heading">')
-        output('<h3 class="panel-title">Map View</h3></div><div class="panel-body">')
+    def print_maps_htmlNew(self):
+        #output('<div class="panel panel-info"><div class="panel-heading">')
+
+        output('<div class="panel panel-info">')
+        output('      <div data-toggle="collapse" class="panel-heading text-center"  data-target="#MapStatusPanel" class="panel-heading collapsed" >')
+#        output('          <button class="glyphicon glyphicon-plus-sign pull-left" data-toggle="collapse" data-target="#MapStatusPanel"></button>')
+        output('          <div class="panel-title">Map View</div>')
+        output('     </div>')        
+        output('<div id ="MapStatusPanel" class="panel-collapse collapse">')
         output('<div id="map_canvas" style="height:500px"></div>')
         output('<script type="text/javascript">')
         output('var map = L.map("map_canvas");')
@@ -944,13 +1304,96 @@ class OpenvpnHtmlPrinter(object):
                         output('bounds.extend(latlng);')
                         output('var marker = L.marker(latlng).addTo(map);')
                         output('var popup = L.popup().setLatLng(latlng);')
+                        output('popup.popupOpen = true;')
                         output('popup.setContent("{0!s} - {1!s}");'.format(
                             session['username'], session['remote_ip']))
                         output('marker.bindPopup(popup);')
         output('map.fitBounds(bounds);')
         output('</script>')
+        output('</div>')
+        output('</div>')
+
+
+    def print_maps_html(self, mupif_monitor):
+        output('<div class="panel panel-info">')
+        output('      <div data-toggle="collapse" class="panel-heading text-center"  data-target="#MapStatusPanel" class="panel-heading collapsed" >')
+
+        output('<h3 class="panel-title">Map View</h3></div>')
+        output('<div class="panel-collapse" div id ="MapStatusPanel">')
+        #output('<div id ="MapStatusPanel" class="panel-collapse collapse">')
+        output('<div id="map_canvas" style="height:500px"></div>')
+        output('<script type="text/javascript">')
+
+        output('var map = L.map("map_canvas");')
+
+        output('var centre = L.latLng({0!s}, {1!s});'.format(self.latitude, self.longitude))
+        output('map.setView(centre, 8);')
+        output('url = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";')
+        output('var layer = new L.TileLayer(url, {});')
+        ## icons
+        output('var IconType = L.Icon.extend({')
+        output('        options: {')
+        output('            iconSize:     [38, 95],')
+        output('            iconAnchor:   [22, 94],')
+        output('            popupAnchor:  [-3, -76]')
+        output('        }')
+        output('});')
+
+        output('var huhu = new IconType({iconUrl: \'images/logos/template.png\'});')
+        ## end of icons
+        output('map.addLayer(layer);')
+        output('var bounds = L.latLngBounds(centre);')
+
+
+        ## finish this part
+        ip2nRunningJobs = {}
+        for vkey, vpn in self.vpns:
+            if 'sessions' in vpn:
+                output('bounds.extend(centre);')
+                for skey, session in list(vpn['sessions'].items()):
+                    nRunningJobs = 0
+                    ip = session.get('local_ip')
+                    for name, jobman in mupif_monitor.jobmans.items():
+                        #if( str(ip) in jobman['uri']):
+                        if( jobman['uri'].find(str(ip)) > 0 ):
+                            if ip in ip2nRunningJobs:
+                                ip2nRunningJobs[ip] += jobman['numberofrunningjobs']
+                            else:
+                                ip2nRunningJobs[ip] = jobman['numberofrunningjobs']
+                            break
+
+
+            
+            if 'sessions' in vpn:
+                output('bounds.extend(centre);')
+                for skey, session in list(vpn['sessions'].items()):
+                    nRunningJobs = 0
+                    ip = session.get('local_ip')
+                    for name, jobman in mupif_monitor.jobmans.items():
+                        #if( str(ip) in jobman['uri']):
+                        if( jobman['uri'].find(str(ip)) > 0 ):
+                            nRunningJobs = jobman['numberofrunningjobs']
+                            break
+
+                    if 'longitude' in session and 'latitude' in session:
+                        output('var latlng = new L.latLng({0!s}, {1!s});'.format(
+                            session['latitude'], session['longitude']))
+                        output('bounds.extend(latlng);')
+                        #output('var marker = L.marker(latlng,{icon:huhu}).addTo(map);')
+                        output('var marker = L.marker(latlng).addTo(map);')
+                        output('var popup = L.popup().setLatLng(latlng);')
+                        #output('popup.setContent("{0!s} - {1!s}");'.format(
+                        #    session['username'], session['remote_ip']))
+                        nRunningJobs = ip2nRunningJobs.get(ip, 0)
+                        output('popup.setContent("{0!s}: {1!s} running jobs");'.format(session['username'], nRunningJobs))
+                        output('marker.bindPopup(popup, {autoClose: false});')
+                        output('marker.openPopup();')
+         
+        output('map.fitBounds(bounds);')
+        output('</script>')
         output('</div></div>')
 
+        
     def print_html_footer(self):
         output('<div class="well well-sm">')
         output('Page automatically reloads every 5 minutes.')
@@ -962,23 +1405,35 @@ class OpenvpnHtmlPrinter(object):
 def main(**kwargs):
     cfg = ConfigLoader(args.config)
     mupifcfg=MupifConfigLoader(args.mupifconfig);
-    monitor = OpenvpnMgmtInterface(cfg, **kwargs)
-    mupifMon = mupifMonitor(mupifcfg) 
 
+
+    monitor = OpenvpnMgmtInterface(cfg, **kwargs)
+
+    mupifMon = mupifMonitor(mupifcfg)
+
+    
     #parse user info
     cgiargs = cgi.FieldStorage()
     global userid
     if ("session_key" in cgiargs):
         userid=login.fetch_username(cgiargs["session_key"])
 
-
-
+    
     OpenvpnHtmlPrinter(cfg, monitor, mupifMon)
+    
     if args.debug:
         pretty_vpns = pformat((dict(monitor.vpns)))
         debug("=== begin vpns\n{0!s}\n=== end vpns".format(pretty_vpns))
 
+def display_page():
+    print ("<title>You are going to be redirected</title>")
+    print ("</HEAD>\n")
+    print ("<BODY BGCOLOR = white>\n")
+    print ("Succesfully authorized, show MuPIF status is")
+    print ("</BODY>\n")
+    print ("</HTML>\n")
 
+        
 def get_args():
     parser = argparse.ArgumentParser(
         description='Display a html page with openvpn status and connections')
@@ -1000,7 +1455,7 @@ if __name__ == '__main__':
     image_path = 'images/'
     main()
 else:
-    from bottle import response, request, get, post, static_file, default_app
+
 
     class args(object):
         debug = False

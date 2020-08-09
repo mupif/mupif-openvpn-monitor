@@ -47,6 +47,8 @@ def test(id, passwd):
     encrypted_pw = m.update(passwd.encode('utf-8'))
     encrypted_pw = m.hexdigest()
     print(encrypted_pw)
+    print("<br>")
+    print(combo)
     if ((id == combo[0]) and (encrypted_pw[0:20] == combo[1][0:20])):
          return "passed"
     else:
@@ -73,7 +75,7 @@ def fetch_username(key):
     # In practice, search file for correct key.
     line = session_file.readline()
     session_file.close()
-    pair = string.split(line, ":")
+    pair = line.split(":")
     return pair[1]
 
 # Define function to delete a session.
@@ -95,7 +97,7 @@ def display_page(result, id, session_key=0):
             #print ("session key is "+str(session_key))
             print ("<HTML>\n")
             print ("<HEAD>\n")
-            print ("<meta http-equiv=\"refresh\" content=\"0;url=monitor?session_key={0}\">\n".format(session_key))
+            print ("<meta http-equiv=\"refresh\" content=\"0;url=monitor.py?session_key={0}\">\n".format(session_key))
             print ("<title>You are going to be redirected</title>")
             print ("</HEAD>\n")
             print ("<BODY BGCOLOR = white>\n")
