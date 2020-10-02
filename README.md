@@ -24,7 +24,7 @@ the COPYING file.
 
 
 ## Acknowledgements
-Based on OpenVPN monior, see https://github.com/mupif/mupif-openvpn-monitor
+Based on OpenVPN monitor, see https://github.com/mupif/mupif-openvpn-monitor
 
 Flags are created by Matthias Slovig (flags@slovig.de) and are licensed under
 Creative Commons License Deed Attribution-ShareAlike 3.0 Unported
