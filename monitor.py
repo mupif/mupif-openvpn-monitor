@@ -1,13 +1,10 @@
-#!/usr/local/anaconda3/bin/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Licensed under GPL v3
 # Copyright 2011 VPAC <http://www.vpac.org>
 # Copyright 2012-2016 Marcus Furlong <furlongm@gmail.com>
 
 from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
 
 try:
     import ConfigParser as configparser
@@ -33,8 +30,7 @@ from humanize import naturalsize
 from collections import OrderedDict, deque
 from pprint import pformat
 from semantic_version import Version as semver
-import Pyro4
-import login
+import Pyro5, Pyro5.api, Pyro5.errors
 
 import threading
 
@@ -43,21 +39,15 @@ from datetime import datetime
 import json, requests
 from keycloak import KeycloakOpenID
 import keycloak
-#from bottle import run, template, request, route, redirect
-#from bottle import response, get, post, static_file, default_app
+from bottle import run, template, request, route, redirect
+from bottle import response, get, post, static_file, default_app
 
-from mupif import PyroUtil
-
-if sys.version_info[0] == 2:
-    reload(sys)
-    sys.setdefaultencoding('utf-8')
+import mupif as mp
 
 
-Pyro4.config.SERIALIZER="pickle"
-Pyro4.config.PICKLE_PROTOCOL_VERSION=2 #to work with python 2.x and 3.x
-Pyro4.config.SERIALIZERS_ACCEPTED={'pickle'}
-Pyro4.config.SERVERTYPE="multiplex"
-Pyro4.config.COMMTIMEOUT = 0.3      # 1.5 seconds
+Pyro5.config.SERIALIZER="serpent"
+Pyro5.config.SERVERTYPE="multiplex"
+Pyro5.config.COMMTIMEOUT = 0.3      # 1.5 seconds
 
 
 # to be decoded from session_id, if provided
@@ -92,15 +82,8 @@ def get_date(date_string, uts=False):
 
 
 def get_str(s):
-    if sys.version_info[0] == 2 and s is not None:
-        return s.decode('ISO-8859-1')
-    elif s is not None:
-        return s.encode('ascii', 'xmlcharrefreplace').decode('utf-8')
-    else:
-        return s
-
-        
-    
+    if s is None: return None
+    return s.encode('ascii','xmlcharrefreplace').decode('utf-8')
 
 class ConfigLoader(object):
 
@@ -142,7 +125,7 @@ class ConfigLoader(object):
                                     'show_disconnect': False}
 
     def parse_global_section(self, config):
-        global_vars = ['site', 'logo', 'latitude', 'longitude', 'maps', 'geoip_data', 'datetime_format']
+        global_vars = ['site', 'logo', 'latitude', 'longitude', 'maps', 'geoip_data', 'datetime_format', 'vpn_type']
         for var in global_vars:
             try:
                 self.settings[var] = config.get('OpenVPN-Monitor', var)
@@ -211,7 +194,7 @@ class MupifConfigLoader(object):
                       'mupifdb_port': '5000'}
 
     def parse_mupif_section(self, config):
-        global_vars = ['nameserver_ip', 'nameserver_port', 'hmac_key', 'mupifdb_ip', 'mupifdb_port']
+        global_vars = ['nameserver_ip', 'nameserver_port', 'mupifdb_ip', 'mupifdb_port']
         for var in global_vars:
             try:
                 self.mupif[var] = config.get('mupif', var)
@@ -281,7 +264,7 @@ class mupifMonitor(object):
     def collect_data(self):
         #print('collect_data called')
         #print (str(self.cfg))
-        self.ns_socket_connect(self.cfg['nameserver_ip'], self.cfg['nameserver_port'], self.cfg['hmac_key'])
+        self.ns_socket_connect(nshost=self.cfg['nameserver_ip'],nsport=self.cfg['nameserver_port'])
         try:
             #print("Querying mupifDB status:\n")
             #print ('http://'+self.cfg['mupifdb_ip']+":"+self.cfg['mupifdb_port']+'/status')
@@ -309,7 +292,7 @@ class mupifMonitor(object):
         jobmanRec['showJobs'] = 'ON'
         try:
             
-            j = Pyro4.Proxy(uri)
+            j = Pyro5.api.Proxy(uri)
             j._pyroHmacKey = hmackey
 
             sig=j.getApplicationSignature()
@@ -326,14 +309,14 @@ class mupifMonitor(object):
             jobmanRec['numberofrunningjobs']=len(status)
                                                              
 
-        except Pyro4.errors.CommunicationError:
+        except Pyro5.errors.CommunicationError:
             jobmanRec['note']="Cannot connect to jobManager %s"%name
             
         jobmanRec['note']+="["+str(datetime.now()-s)+"]"
         return
 
 
-    def ns_socket_connect(self, nshost, nsport, nskey):
+    def ns_socket_connect(self, nshost, nsport):
         timeout = 3
         self.s = False
         self.cfg['error']=""
@@ -364,17 +347,95 @@ class mupifMonitor(object):
 
 
         try:
-            self.ns=Pyro4.locateNS(host=nshost, port=int(nsport), hmac_key=nskey)
+            self.ns=Pyro5.api.locate_ns(host=nshost, port=int(nsport))
             self.cfg['ns_status']="OK"
         except Exception:
             self.cfg['ns_status']="Failed"
-            self.cfg['error'] = "Pyro4.locateNS failed for NameServer on %s:%s" %(nshost, nsport)
+            self.cfg['error'] = "Pyro5.api.locate_ns failed for NameServer on %s:%s" %(nshost, nsport)
     
     def _socket_recv(self, length):
-        if sys.version_info[0] == 2:
-            return self.s.recv(length)
-        else:
-            return self.s.recv(length).decode('utf-8')
+        return self.s.recv(length).decode('utf-8')
+
+
+
+class WireguardMgmtInterface(object):
+    def __init__(self,cfg):
+        self.vpns=cfg.vpns
+        geoip_data = cfg.settings['geoip_data']
+        self.gi = GeoIP.open(geoip_data, GeoIP.GEOIP_STANDARD)
+        for iface,vpn in self.vpns.items():
+            self.collect_data(iface,vpn)
+    def collect_data(self,iface,vpn):
+        import json,subprocess
+        vpn['version'] = open('/sys/module/wireguard/version').read()[:-1]
+        vpn['semver'] = semver(vpn['version'])
+        try:
+            dta=json.loads(subprocess.check_output(['sudo','/usr/share/doc/wireguard-tools/examples/json/wg-json']))
+        except subprocess.CalledProcessError:
+            vpn['socket_connected']=False
+            return
+        dta=dta[iface]
+        import netifaces
+        ifaceip=netifaces.ifaddresses(iface)
+        if netifaces.AF_INET in ifaceip: local_ip=ip_address(ifaceip[netifaces.AF_INET][0]['addr'])
+        elif netiface.AF_INET6 in ifaceip: local_ip=ip_address(ifaceip[netifaces.AF_INET6][0]['addr'])
+        else: local_ip='?'
+        vpn['state']={
+            'up_since':datetime.utcfromtimestamp(0),
+            'connected':'?',
+            'success':'?',
+            'local_ip':local_ip,
+            'remote_ip':'',
+            'mode':'Server' # Client or Server
+        }
+        activePeers=dict([(peerKey,peerData) for peerKey,peerData in dta['peers'].items() if 'transferRx' in peerData])
+        vpn['stats']={
+            'nclients':len(dta['peers']),
+            'bytesin':sum([p['transferTx'] for p in activePeers]),
+            'bytesout':sum([p['transferRx'] for p in activePeers]),
+        }
+        for peerKey,peerData in dta['peers'].items():
+            vpn['sessions']={}
+            session=vpn['sessions'][peerKey]={}
+            cli=session['Client']={}
+            cli['tuntap_read']=cli['tuntap_write']=cli['auth_read']=0
+            cli['tcpudp_read']=peerData.get('transferRx',0)
+            cli['tcpudp_write']=peerData.get('transferTx',0)
+            if 'endpoint' in peerData:
+                print(peerData['endpoint'])
+                remote_str=peerData['endpoint']
+                # copied from the OpeVPN monitor; ugly!
+                if remote_str.count(':') == 1:
+                    remote, port = remote_str.split(':')
+                elif '(' in remote_str:
+                    remote, port = remote_str.split('(')
+                    port = port[:-1]
+                else: remote=remote_str
+                remote_ip=ip_address(remote)
+                if isinstance(remote_ip, IPv6Address) and remote_ip.ipv4_mapped is not None:
+                    session['remote_ip'] = remote_ip.ipv4_mapped
+                else:
+                    session['remote_ip'] = remote_ip
+                if session['remote_ip'].is_private:
+                    session['location'] = 'RFC1918'
+                else:
+                    try:
+                        gir = self.gi.record_by_addr(str(session['remote_ip']))
+                    except SystemError:
+                        gir = None
+                    if gir is not None:
+                        session['location'] = get_str(gir['country_code'])
+                        session['city'] = get_str(gir['city'])
+                        session['country_name'] = gir['country_name']
+                        session['longitude'] = gir['longitude']
+                        session['latitude'] = gir['latitude']
+            session['local_ip']=peerData['allowedIps'][0]
+            session['bytes_recv']=peerData.get('transferRx',0)
+            session['bytes_sent']=peerData.get('transferTx',0)
+            session['connected_since']=datetime.utcfromtimestamp(0)
+            session['last_seen']=datetime.utcfromtimestamp(peerData.get('latestHandshake',0))
+
+
 
 
 
@@ -419,16 +480,10 @@ class OpenvpnMgmtInterface(object):
         vpn['sessions'] = self.parse_status(status, self.gi, vpn['semver'])
 
     def _socket_send(self, command):
-        if sys.version_info[0] == 2:
-            self.s.send(command)
-        else:
-            self.s.send(bytes(command, 'utf-8'))
+        self.s.send(bytes(command, 'utf-8'))
 
     def _socket_recv(self, length):
-        if sys.version_info[0] == 2:
-            return self.s.recv(length)
-        else:
-            return self.s.recv(length).decode('utf-8')
+        return self.s.recv(length).decode('utf-8')
 
     def _socket_connect(self, vpn):
         host = vpn['host']
@@ -1120,7 +1175,7 @@ class OpenvpnHtmlPrinter(object):
                 else:
                     output('     <tr class = "tablesorter"> <td> <button id="button" type="button" class="btn btn-primary" data-toggle="collapse" data-target="#collapseme_{6!s}"><span class="glyphicon glyphicon-plus"></button></td><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td><td class="{5!s}">{4!s}</td></tr>'.format(name, jobman['note'], jobman['uri'], jobman['numberofrunningjobs'], jobman['status'], trclass, index))
 
-                jobMan = PyroUtil.connectJobManager(mupif_monitor.ns, name, 'mupif-secret-key')
+                jobMan = mp.pyroutil.connectJobManager(mupif_monitor.ns, name, 'mupif-secret-key')
                 ##jobMan.terminateJob('27@Abaqus@Mupif.LIST')
 
                 output('<tr class= "tablesorter-childRow">')
@@ -1145,10 +1200,10 @@ class OpenvpnHtmlPrinter(object):
                     sec  = int(rec[1])%60
                     jobtime = "%02d:%02d:%02d"%(hrs, mins, sec)
                     if(userGroup == name or userGroup == "CTU" ):
-                        output('<tr><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td></td><td><a class = "button" href="deleteJM.py?jobManName={4!s}&jobName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(jobid, port, user, jobtime, name))
+                        output('<tr><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td></td><td><a class = "button" href="deleteJM.py?jobManName={4!s}&jobName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(jobid, -1, user, jobtime, name))
 
                     else:
-                        output('<tr><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td></td></tr>'.format(jobid, port, user, jobtime, name, trclass))
+                        output('<tr><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td></td></tr>'.format(jobid, -1, user, jobtime, name, trclass))
 
                 output('</table>')
                 output(' </div></tr>')
@@ -1406,8 +1461,10 @@ def main(**kwargs):
     cfg = ConfigLoader(args.config)
     mupifcfg=MupifConfigLoader(args.mupifconfig);
 
-
-    monitor = OpenvpnMgmtInterface(cfg, **kwargs)
+    vpn_type=cfg.get('vpn_type','openvpn'):
+    if vpn_type=='openvpn': monitor = OpenvpnMgmtInterface(cfg, **kwargs)
+    elif vpn_type=='wireguard': monitor=WireguardMgmtInterface(cfg,**kwargs)
+    else: raise RuntimeError('Unrecognized vpn_type "{vpn_type}" (must be one of: openvpn, wireguard).')
 
     mupifMon = mupifMonitor(mupifcfg)
 
@@ -1446,16 +1503,25 @@ def get_args():
     parser.add_argument('-m', '--mupifconfig', type=str,
                         required=False, default='./mupif-monitor.conf',
                         help='Path to config file mupif-monitor.conf')
+    parser.add_argument('--dump-only',action='store_true',default=False,help='Only dump current data and exit')
     return parser.parse_args()
 
-
+# print(__name__)
 if __name__ == '__main__':
     args = get_args()
+    if args.dump_only:
+        from collections import namedtuple
+        cfg=namedtuple('Cfg',('vpns','settings'))(vpns={'mupif1':{},'mupif2':{}},settings={'geoip_data':'./data/GeoLiteCity.dat'})
+        WireguardMgmtInterface(cfg=cfg)
+        import pprint
+        pprint.pprint(cfg.vpns)
+        sys.exit(0)
+    import login
     wsgi = False
     image_path = 'images/'
     main()
 else:
-
+    import login
 
     class args(object):
         debug = False
