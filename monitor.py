@@ -372,6 +372,7 @@ class WireguardMgmtInterface(object):
         try:
             dta=json.loads(subprocess.check_output(['sudo','/usr/share/doc/wireguard-tools/examples/json/wg-json']))
         except subprocess.CalledProcessError:
+            warnings.warn('Calling wg-json failed. You might need to add the line "ALL ALL=NOPASSWD: /usr/share/doc/wireguard-tools/examples/json/wg-json" to /etc/sudoers.d/10-wireguard-show.conf (and run chmod 0440 /etc/sudoers.d/10-wireguard-show.conf) to get wireguard information as regular user.')
             vpn['socket_connected']=False
             return
         dta=dta[iface]
@@ -1461,7 +1462,7 @@ def main(**kwargs):
     cfg = ConfigLoader(args.config)
     mupifcfg=MupifConfigLoader(args.mupifconfig);
 
-    vpn_type=cfg.get('vpn_type','openvpn'):
+    vpn_type=cfg.settings.get('vpn_type','openvpn')
     if vpn_type=='openvpn': monitor = OpenvpnMgmtInterface(cfg, **kwargs)
     elif vpn_type=='wireguard': monitor=WireguardMgmtInterface(cfg,**kwargs)
     else: raise RuntimeError('Unrecognized vpn_type "{vpn_type}" (must be one of: openvpn, wireguard).')
