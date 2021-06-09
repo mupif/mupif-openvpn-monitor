@@ -1,7 +1,7 @@
 GeoIP
 humanize
 ipaddr
-bottle
+bottle>=0.12.19
 semantic_version
 python-keycloak
 
