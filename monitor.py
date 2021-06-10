@@ -1,10 +1,8 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+#!/usr/local/anaconda3/envs/musicode/bin/python
+
 # Licensed under GPL v3
 # Copyright 2011 VPAC <http://www.vpac.org>
 # Copyright 2012-2016 Marcus Furlong <furlongm@gmail.com>
-
-from __future__ import absolute_import
 
 try:
     import ConfigParser as configparser
@@ -18,13 +16,19 @@ except ImportError:
     from ipaddress import ip_address, IPv6Address
 
 
+# this might go to the config file as well
+REQUIRE_LOGIN=False 
+
 import socket
 import re
 import argparse
+import sys
 import GeoIP
 import sys
 import os
 import cgi
+#import cgitb
+#cgitb.enable()
 from datetime import datetime
 from humanize import naturalsize
 from collections import OrderedDict, deque
@@ -37,8 +41,6 @@ import threading
 from datetime import datetime 
 
 import json, requests
-from keycloak import KeycloakOpenID
-import keycloak
 from bottle import run, template, request, route, redirect
 from bottle import response, get, post, static_file, default_app
 
@@ -240,7 +242,7 @@ class mupifMonitor(object):
             self.jobmans={}
             # collect all registered jobmans from nameserver using jobman metadata tag
             if (self.ns):
-                query = self.ns.list(metadata_any={"type:jobmanager"})
+                query = self.ns.yplookup(meta_any={"type:jobmanager"}) # XXX this is to be tested more
                 info(query)
                 threads = []
                 start = datetime.now()
@@ -365,10 +367,15 @@ class WireguardMgmtInterface(object):
         self.gi = GeoIP.open(geoip_data, GeoIP.GEOIP_STANDARD)
         for iface,vpn in self.vpns.items():
             self.collect_data(iface,vpn)
+        
     def collect_data(self,iface,vpn):
         import json,subprocess
-        vpn['version'] = open('/sys/module/wireguard/version').read()[:-1]
-        vpn['semver'] = semver(vpn['version'])
+        numver=open('/sys/module/wireguard/version').read()[:-1]
+        vpn['version'] = 'Wireguard '+numver
+        vpn['semver'] = semver(numver)
+        vpn['socket_connected']=True
+        peerMapJson=vpn.get('peer_map',None)
+        peerMap=(json.load(open(peerMapJson,'r')) if peerMapJson else {})
         try:
             dta=json.loads(subprocess.check_output(['sudo','/usr/share/doc/wireguard-tools/examples/json/wg-json']))
         except subprocess.CalledProcessError:
@@ -389,21 +396,28 @@ class WireguardMgmtInterface(object):
             'remote_ip':'',
             'mode':'Server' # Client or Server
         }
+        #import pprint
+        #pprint.pprint(dta)
         activePeers=dict([(peerKey,peerData) for peerKey,peerData in dta['peers'].items() if 'transferRx' in peerData])
         vpn['stats']={
             'nclients':len(dta['peers']),
-            'bytesin':sum([p['transferTx'] for p in activePeers]),
-            'bytesout':sum([p['transferRx'] for p in activePeers]),
+            'bytesin':sum([p['transferTx'] for p in activePeers.values()]),
+            'bytesout':sum([p['transferRx'] for p in activePeers.values()]),
         }
+        vpn['sessions']={}
         for peerKey,peerData in dta['peers'].items():
-            vpn['sessions']={}
             session=vpn['sessions'][peerKey]={}
             cli=session['Client']={}
             cli['tuntap_read']=cli['tuntap_write']=cli['auth_read']=0
             cli['tcpudp_read']=peerData.get('transferRx',0)
             cli['tcpudp_write']=peerData.get('transferTx',0)
+            if 0:
+                print(1000*'#')
+                from pprint import pprint
+                pprint(peerKey)
+                pprint(peerData)
             if 'endpoint' in peerData:
-                print(peerData['endpoint'])
+                # print(peerData['endpoint'])
                 remote_str=peerData['endpoint']
                 # copied from the OpeVPN monitor; ugly!
                 if remote_str.count(':') == 1:
@@ -430,10 +444,15 @@ class WireguardMgmtInterface(object):
                         session['country_name'] = gir['country_name']
                         session['longitude'] = gir['longitude']
                         session['latitude'] = gir['latitude']
+            else: session['remote_ip']='<unknown>'
+
             session['local_ip']=peerData['allowedIps'][0]
             session['bytes_recv']=peerData.get('transferRx',0)
             session['bytes_sent']=peerData.get('transferTx',0)
             session['connected_since']=datetime.utcfromtimestamp(0)
+            # TODO: read wireguard config and put friendly name here
+            if peerKey in peerMap: session['username']=peerMap[peerKey]+'<br>'+peerKey[:10]+'‥'
+            else: session['username']=peerKey[:10]+'‥'
             session['last_seen']=datetime.utcfromtimestamp(peerData.get('latestHandshake',0))
 
 
@@ -761,7 +780,7 @@ class OpenvpnHtmlPrinter(object):
         output('<html><head>')
         output('<meta charset="utf-8">')
         output('<meta name="viewport" content="width=device-width, initial-scale=1">')
-        output('<title>{0!s} OpenVPN Status Monitor</title>'.format(self.site))
+        output('<title>{0!s} VPN Status Monitor</title>'.format(self.site))
         output('<meta http-equiv="refresh" content="300" />')
 
         
@@ -876,7 +895,7 @@ class OpenvpnHtmlPrinter(object):
         output('</button>')
 
         output('<a class="navbar-brand" href="#">')
-        output('{0!s} OpenVPN Status Monitor</a>'.format(self.site))
+        output('{0!s} VPN Status Monitor</a>'.format(self.site))
 
         output('</div><div class="collapse navbar-collapse" id="myNavbar">')
         output('<ul class="nav navbar-nav"><li class="dropdown">')
@@ -899,61 +918,66 @@ class OpenvpnHtmlPrinter(object):
         if self.maps:
             output('<li><a href="#map_canvas">Map View</a></li>')
 
-        # if session_key defined
-        # display user + logout
-        # else display login
-        keycloak_conf = json.loads(open('keycloak.json').read())
-        global userid
-        keycloak_openid = KeycloakOpenID(server_url=keycloak_conf['auth-server-url'] + "/", realm_name=keycloak_conf['realm'],client_id=keycloak_conf['resource'],client_secret_key=keycloak_conf['credentials']['secret'])
-        #config_well_know = keycloak_openid.well_know()
-        #print(config_well_know)
-        #print(sys.argv)
-        arguments = cgi.FieldStorage()
-        if ('code' in arguments):
-            code = arguments.getvalue('code')
-            #print(code)
-            #print('-----------------------------------------------')
-            token = keycloak_openid.token(grant_type="authorization_code", code=code, redirect_uri="http://mech2018.fsv.cvut.cz/mupif/openvpn-monitor2/monitor.py")
-            #token = keycloak_openid.token(grant_type="authorization_code", code=code, redirect_uri="http://172.30.0.1/mupif/openvpn-monitor2/monitor.py")
-            userinfo = keycloak_openid.userinfo(token['access_token'])
-            userid = userinfo['preferred_username']
-            #print(userid)
-        else:
-            login_url = keycloak_openid.auth_url("http://mech2018.fsv.cvut.cz/mupif/openvpn-monitor2/monitor.py")
-            #login_url = keycloak_openid.auth_url("http://172.30.0.1/mupif/openvpn-monitor2/monitor.py")
-            #print ('<br> Welcome Anonymous !')
-            #print ('<a href="'+login_url+'"> Login here </a>')
-            #print ('<br>')
+
+        if REQUIRE_LOGIN:
+            from keycloak import KeycloakOpenID
+            import keycloak
+            # if session_key defined
+            # display user + logout
+            # else display login
+            keycloak_conf = json.loads(open('keycloak.json').read())
+            global userid
+            keycloak_openid = KeycloakOpenID(server_url=keycloak_conf['auth-server-url'] + "/", realm_name=keycloak_conf['realm'],client_id=keycloak_conf['resource'],client_secret_key=keycloak_conf['credentials']['secret'])
+            #config_well_know = keycloak_openid.well_know()
+            #print(config_well_know)
+            #print(sys.argv)
+            arguments = cgi.FieldStorage()
+            if ('code' in arguments):
+                code = arguments.getvalue('code')
+                #print(code)
+                #print('-----------------------------------------------')
+                token = keycloak_openid.token(grant_type="authorization_code", code=code, redirect_uri="http://mech2018.fsv.cvut.cz/mupif/openvpn-monitor2/monitor.py")
+                #token = keycloak_openid.token(grant_type="authorization_code", code=code, redirect_uri="http://172.30.0.1/mupif/openvpn-monitor2/monitor.py")
+                userinfo = keycloak_openid.userinfo(token['access_token'])
+                userid = userinfo['preferred_username']
+                #print(userid)
+            else:
+                login_url = keycloak_openid.auth_url("http://mech2018.fsv.cvut.cz/mupif/openvpn-monitor2/monitor.py")
+                #login_url = keycloak_openid.auth_url("http://172.30.0.1/mupif/openvpn-monitor2/monitor.py")
+                #print ('<br> Welcome Anonymous !')
+                #print ('<a href="'+login_url+'"> Login here </a>')
+                #print ('<br>')
+                
+                #userinfo = keycloak_openid.userinfo(token['access_token'])
+
+
+
+
             
-            #userinfo = keycloak_openid.userinfo(token['access_token'])
+            #try:
+            #    token = keycloak_openid.token('user', 'password')
+            #except keycloak.exceptions.KeycloakAuthenticationError:
+            #    userid = ''
+            #token = keycloak_openid.token("user", "password", totp="012345")
+            #token = keycloak_openid.token(grant_type="authorization_code", code=code)
+
+    #        if 'code' in request.query.keys():
+    #            code = request.query['code']
+                # Get WellKnow
+
+            # Get Token
+            #token = keycloak_openid.token("user", "password")
+            # Get Userinfo
+            
 
 
+            
+            if (userid):
+                output('<li><a>Logged in as '+userid+' | Logout</a></li>')
+            else:
+                print ('<li><a href="'+login_url+'"> Login</a></li>')
+                #output('<li><a href="login.py">Login</a></li>')
 
-
-        
-        #try:
-        #    token = keycloak_openid.token('user', 'password')
-        #except keycloak.exceptions.KeycloakAuthenticationError:
-        #    userid = ''
-        #token = keycloak_openid.token("user", "password", totp="012345")
-        #token = keycloak_openid.token(grant_type="authorization_code", code=code)
-
-#        if 'code' in request.query.keys():
-#            code = request.query['code']
-            # Get WellKnow
-
-        # Get Token
-        #token = keycloak_openid.token("user", "password")
-        # Get Userinfo
-        
-
-
-        
-        if (userid):
-            output('<li><a>Logged in as '+userid+' | Logout</a></li>')
-        else:
-            print ('<li><a href="'+login_url+'"> Login</a></li>')
-            #output('<li><a href="login.py">Login</a></li>')
 
         output('</ul>')
 
@@ -1033,7 +1057,7 @@ class OpenvpnHtmlPrinter(object):
 
         output('<div class="panel panel-info">')
         output('      <div data-toggle="collapse" class="panel-heading text-center"  data-target="#VPNStatusPanel" class="panel-heading collapsed" >')
-        output('          <div class="panel-title">Composelector VPN</div>')
+        output('          <div class="panel-title">%s</div>'%vpn_id)
         output('     </div>')        
         output('     <div id="VPNStatusPanel" class="panel-collapse collapse">')
 
@@ -1099,17 +1123,16 @@ class OpenvpnHtmlPrinter(object):
         
         
 
-
-        json_file = open('userGroup_2_userID.json', 'r')
-        json_str = json_file.read()
-        userGroup_2_userID = json.loads(json_str)[0]
         userGroup = 'None'
-        for key in userGroup_2_userID:
-            userID = key
-            if userID == userid:
-                userGroup = userGroup_2_userID.get(userID)
-
-        print(userGroup)
+        if REQUIRE_LOGIN:
+            json_file = open('userGroup_2_userID.json', 'r')
+            json_str = json_file.read()
+            userGroup_2_userID = json.loads(json_str)[0]
+            for key in userGroup_2_userID:
+                userID = key
+                if userID == userid:
+                     userGroup = userGroup_2_userID.get(userID)
+            print(userGroup)
 
             
 
@@ -1463,18 +1486,18 @@ def main(**kwargs):
     mupifcfg=MupifConfigLoader(args.mupifconfig);
 
     vpn_type=cfg.settings.get('vpn_type','openvpn')
-    if vpn_type=='openvpn': monitor = OpenvpnMgmtInterface(cfg, **kwargs)
+    if vpn_type=='openvpn': monitor=OpenvpnMgmtInterface(cfg, **kwargs)
     elif vpn_type=='wireguard': monitor=WireguardMgmtInterface(cfg,**kwargs)
     else: raise RuntimeError('Unrecognized vpn_type "{vpn_type}" (must be one of: openvpn, wireguard).')
 
     mupifMon = mupifMonitor(mupifcfg)
-
     
     #parse user info
     cgiargs = cgi.FieldStorage()
-    global userid
-    if ("session_key" in cgiargs):
-        userid=login.fetch_username(cgiargs["session_key"])
+    if REQUIRE_LOGIN:
+        global userid
+        if ("session_key" in cgiargs):
+            userid=login.fetch_username(cgiargs["session_key"])
 
     
     OpenvpnHtmlPrinter(cfg, monitor, mupifMon)
@@ -1512,18 +1535,15 @@ if __name__ == '__main__':
     args = get_args()
     if args.dump_only:
         from collections import namedtuple
-        cfg=namedtuple('Cfg',('vpns','settings'))(vpns={'mupif1':{},'mupif2':{}},settings={'geoip_data':'./data/GeoLiteCity.dat'})
+        cfg=namedtuple('Cfg',('vpns','settings'))(vpns={'musicode':{}},settings={'geoip_data':'./data/GeoLiteCity.dat'})
         WireguardMgmtInterface(cfg=cfg)
         import pprint
         pprint.pprint(cfg.vpns)
         sys.exit(0)
-    import login
     wsgi = False
     image_path = 'images/'
     main()
 else:
-    import login
-
     class args(object):
         debug = False
         config = './openvpn-monitor.conf'
