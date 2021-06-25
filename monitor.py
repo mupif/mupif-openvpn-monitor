@@ -31,6 +31,7 @@ import cgi
 #cgitb.enable()
 from datetime import datetime
 from humanize import naturalsize
+import humanize
 from collections import OrderedDict, deque
 from pprint import pformat
 from semantic_version import Version as semver
@@ -249,9 +250,9 @@ class mupifMonitor(object):
                 for name, uri in query.items():
                     self.jobmans[name] = {}
                     jobmanRec=self.jobmans[name];
-                    jobmanRec['uri']=uri
+                    jobmanRec['uri']=uri[0] # yplookup returns (URI, metadata) tuple
                     #self.collect_jobman_data(name, uri, jobmanRec)
-                    thread = threading.Thread(target=self.collect_jobman_data, args=(name, uri, jobmanRec))
+                    thread = threading.Thread(target=self.collect_jobman_data, args=(name, uri[0], jobmanRec))
                     threads.append(thread)                   
                 
                 for t in threads:
@@ -286,16 +287,14 @@ class mupifMonitor(object):
     def collect_jobman_data(self, name, uri, jobmanRec):
 
         s = datetime.now()
-        hmackey = self.cfg['hmac_key'].encode(encoding='UTF-8')
 
         jobmanRec['status']='Failed'
         jobmanRec['note']=''
         jobmanRec['numberofrunningjobs']=''
         jobmanRec['showJobs'] = 'ON'
         try:
-            
             j = Pyro5.api.Proxy(uri)
-            j._pyroHmacKey = hmackey
+            # j._pyroHmacKey = hmackey
 
             sig=j.getApplicationSignature()
             status = j.getStatus()
@@ -371,6 +370,7 @@ class WireguardMgmtInterface(object):
     def collect_data(self,iface,vpn):
         import json,subprocess
         numver=open('/sys/module/wireguard/version').read()[:-1]
+        vpn['type']='wireguard'
         vpn['version'] = 'Wireguard '+numver
         vpn['semver'] = semver(numver)
         vpn['socket_connected']=True
@@ -453,7 +453,8 @@ class WireguardMgmtInterface(object):
             # TODO: read wireguard config and put friendly name here
             if peerKey in peerMap: session['username']=peerMap[peerKey]+'<br>'+peerKey[:10]+'‥'
             else: session['username']=peerKey[:10]+'‥'
-            session['last_seen']=datetime.utcfromtimestamp(peerData.get('latestHandshake',0))
+            # the timestamp  from wg-json is in local time, not UTC
+            session['last_seen']=datetime.fromtimestamp(peerData.get('latestHandshake',0))
 
 
 
@@ -490,6 +491,7 @@ class OpenvpnMgmtInterface(object):
 
     def collect_data(self, vpn):
         version = self.send_command('version\n')
+        vpn['type']='OpenVPN'
         vpn['version'] = self.parse_version(version)
         vpn['semver'] = semver(vpn['version'].split(' ')[1])
         state = self.send_command('state\n')
@@ -991,10 +993,11 @@ class OpenvpnHtmlPrinter(object):
         output('<div class="container-fluid">')
 
     @staticmethod
-    def print_session_table_headers(vpn_mode, show_disconnect):
-        server_headers = ['Username / Hostname', 'VPN IP',
-                          'Remote IP', 'Location', 'Bytes In',
-                          'Bytes Out', 'Connected Since', 'Last Ping', 'Time Online']
+    def print_session_table_headers(vpn, vpn_mode, show_disconnect):
+        isWg=(vpn['type']=='wireguard')
+        if isWg: server_headers=['Name / pubkey','VPN IP','Remote IP','Location','Bytes In','Bytes Out','Last handshake']
+        else: server_headers = ['Username / Hostname', 'VPN IP', 'Remote IP', 'Location', 'Bytes In', 'Bytes Out', 'Connected Since', 'Last Ping', 'Time Online']
+
         if show_disconnect:
             server_headers.append('Action')
 
@@ -1002,6 +1005,7 @@ class OpenvpnHtmlPrinter(object):
                           'TCP-UDP-Write', 'Auth-Read']
 
         if vpn_mode == 'Client':
+            if isWg: raise RuntimeError('Client mode with Wireguard not supported.')
             headers = client_headers
         elif vpn_mode == 'Server':
             headers = server_headers
@@ -1050,6 +1054,8 @@ class OpenvpnHtmlPrinter(object):
         up_since = vpn['state']['up_since']
         show_disconnect = vpn['show_disconnect']
 
+        isWg=(vpn['type']=='wireguard')
+
 
         anchor = vpn['name'].lower().replace(' ', '_')
         #output('<div class="panel panel-success" id="{0!s}">'.format(anchor))
@@ -1063,19 +1069,22 @@ class OpenvpnHtmlPrinter(object):
 
           
         output('<table id = "vpnTable" class="table table-condensed table-responsive">')
-        output('<thead><tr><th id="mode">VPN Mode</th><th mode = "status">Status</th><th>Pingable</th>')
+        output('<thead><tr><th id="mode">VPN Mode</th><th mode = "status">Status</th>')
+        if not isWg: output('<th>Pingable</th>')
         output('<th>Clients</th><th>Total Bytes In</th><th>Total Bytes Out</th>')
-        output('<th>Up Since</th><th>Local IP Address</th>')
+        if not isWg: output('<th>Up Since</th>')
+        output('<th>Local IP Address</th>')
         if vpn_mode == 'Client':
             output('<th>Remote IP Address</th>')
         output('</tr></thead><tbody>')
-        output('<tr><td>{0!s}</td>'.format(vpn_mode))
+
+        output(f'<tr><td>{vpn_mode} ({vpn["type"]})</td>')
         output('<td>{0!s}</td>'.format(connection))
-        output('<td>{0!s}</td>'.format(pingable))
+        if not isWg: output('<td>{0!s}</td>'.format(pingable))
         output('<td>{0!s}</td>'.format(nclients))
         output('<td>{0!s} ({1!s})</td>'.format(bytesin, naturalsize(bytesin, binary=True)))
         output('<td>{0!s} ({1!s})</td>'.format(bytesout, naturalsize(bytesout, binary=True)))
-        output('<td>{0!s}</td>'.format(up_since.strftime(self.datetime_format)))
+        if not isWg: output('<td>{0!s}</td>'.format(up_since.strftime(self.datetime_format)))
         output('<td>{0!s}</td>'.format(local_ip))
 
         if vpn_mode == 'Client':
@@ -1083,28 +1092,12 @@ class OpenvpnHtmlPrinter(object):
         output('</tr></tbody></table>')
 
         if vpn_mode == 'Client' or nclients > 0:
-            self.print_session_table_headers(vpn_mode, show_disconnect)
-            self.print_session_table(vpn_id, vpn_mode, vpn_sessions, show_disconnect)
+            self.print_session_table_headers(vpn, vpn_mode, show_disconnect)
+            self.print_session_table(vpn, vpn_id, vpn_mode, vpn_sessions, show_disconnect)
             self.print_session_table_footer()
 
         output('<span class="label label-default">{0!s}</span>'.format(vpn['version']))
         output('</div></div>')
-
-
-
-#        output('<div class="panel panel-default">')
-#        output('<div data-toggle="collapse" data-target="#panel2" class="panel-heading collapsed">')
-#        output('<h4 class="panel-title">')
-#        output('<a> Panel 2 </a>')
-#        output('</h4>')
-#        output('</div>')
-#        output('<div id="panel2" class="panel-collapse collapse">')
-#        output('<div class="panel-body">')
-#        output('</div>')
-#        output('</div>')
-#        output('</div>')
-
-
 
 
     @staticmethod
@@ -1199,7 +1192,7 @@ class OpenvpnHtmlPrinter(object):
                 else:
                     output('     <tr class = "tablesorter"> <td> <button id="button" type="button" class="btn btn-primary" data-toggle="collapse" data-target="#collapseme_{6!s}"><span class="glyphicon glyphicon-plus"></button></td><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td><td class="{5!s}">{4!s}</td></tr>'.format(name, jobman['note'], jobman['uri'], jobman['numberofrunningjobs'], jobman['status'], trclass, index))
 
-                jobMan = mp.pyroutil.connectJobManager(mupif_monitor.ns, name, 'mupif-secret-key')
+                jobMan = mp.pyroutil.connectJobManager(mupif_monitor.ns, name)
                 ##jobMan.terminateJob('27@Abaqus@Mupif.LIST')
 
                 output('<tr class= "tablesorter-childRow">')
@@ -1209,14 +1202,13 @@ class OpenvpnHtmlPrinter(object):
                 output('<div class="collapse out" id="collapseme_{0!s}">'.format(index))
                 #####
                 output('        <table id = "JobTable{0!s}" class="table table-borderless">'.format(index))
-                output('<thead><tr><th>Job ID</th><th>Port</th><th>User@host</th><th>Running time</th></thead>')
+                output('<thead><tr><th>Job ID</th><th>User@host</th><th>Running time</th></thead>')
 
                 status = jobMan.getStatus()
                 for rec in status:
 
                     jobid = rec[0]
                     #print(jobid)
-                    port = (rec[3])
                     user = rec[2]
                     mins = rec[1]//60
                     hrs  = mins//24
@@ -1224,10 +1216,10 @@ class OpenvpnHtmlPrinter(object):
                     sec  = int(rec[1])%60
                     jobtime = "%02d:%02d:%02d"%(hrs, mins, sec)
                     if(userGroup == name or userGroup == "CTU" ):
-                        output('<tr><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td></td><td><a class = "button" href="deleteJM.py?jobManName={4!s}&jobName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(jobid, -1, user, jobtime, name))
+                        output('<tr><td>{0!s}</td><td>{2!s}</td><td>{3!s}</td></td><td><a class = "button" href="deleteJM.py?jobManName={4!s}&jobName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(jobid, user, jobtime, name))
 
                     else:
-                        output('<tr><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td></td></tr>'.format(jobid, -1, user, jobtime, name, trclass))
+                        output('<tr><td>{0!s}</td><td>{2!s}</td><td>{3!s}</td></td></tr>'.format(jobid, user, jobtime, name, trclass))
 
                 output('</table>')
                 output(' </div></tr>')
@@ -1287,7 +1279,7 @@ class OpenvpnHtmlPrinter(object):
         
 
     @staticmethod
-    def print_client_session(session):
+    def print_client_session(vpn, session):
         tuntap_r = session['tuntap_read']
         tuntap_w = session['tuntap_write']
         tcpudp_r = session['tcpudp_read']
@@ -1299,7 +1291,8 @@ class OpenvpnHtmlPrinter(object):
         output('<td>{0!s} ({1!s})</td>'.format(tcpudp_w, naturalsize(tcpudp_w, binary=True)))
         output('<td>{0!s} ({1!s})</td>'.format(auth_r, naturalsize(auth_r, binary=True)))
 
-    def print_server_session(self, vpn_id, session, show_disconnect):
+    def print_server_session(self, vpn, vpn_id, session, show_disconnect):
+        isWg=(vpn['type']=='wireguard')
         total_time = str(datetime.now() - session['connected_since'])[:-7]
         bytes_recv = session['bytes_recv']
         bytes_sent = session['bytes_sent']
@@ -1322,18 +1315,17 @@ class OpenvpnHtmlPrinter(object):
                 output('<td><img src="{0!s}" title="{1!s}" alt="{1!s}" /> '.format(flag, full_location))
                 output('{0!s}</td>'.format(full_location))
         else:
-            output('<td>Unknown</td>')
+            output('<td>N/A</td>')
 
         output('<td>{0!s} ({1!s})</td>'.format(bytes_recv, naturalsize(bytes_recv, binary=True)))
         output('<td>{0!s} ({1!s})</td>'.format(bytes_sent, naturalsize(bytes_sent, binary=True)))
-        output('<td>{0!s}</td>'.format(
-            session['connected_since'].strftime(self.datetime_format)))
+        if not isWg: output('<td>{0!s}</td>'.format(session['connected_since'].strftime(self.datetime_format)))
         if 'last_seen' in session:
-            output('<td>{0!s}</td>'.format(
-                session['last_seen'].strftime(self.datetime_format)))
-        else:
-            output('<td>ERROR</td>')
-        output('<td>{0!s}</td>'.format(total_time))
+            last=session['last_seen']
+            if last==datetime.fromtimestamp(0): output('<td>N/A</td>')
+            else: output('<td>{!s}<br>{} ago</td>'.format(session['last_seen'].strftime(self.datetime_format),humanize.naturaldelta(datetime.now()-session['last_seen'])))
+        else: output('<td>ERROR</td>')
+        if not isWg: output('<td>{0!s}</td>'.format(total_time))
         if show_disconnect:
             output('<td><form method="post">')
             output('<input type="hidden" name="vpn_id" value="{0!s}">'.format(vpn_id))
@@ -1346,13 +1338,13 @@ class OpenvpnHtmlPrinter(object):
             output('<span class="glyphicon glyphicon-remove"></span> ')
             output('Disconnect</button></form></td>')
 
-    def print_session_table(self, vpn_id, vpn_mode, sessions, show_disconnect):
+    def print_session_table(self, vpn, vpn_id, vpn_mode, sessions, show_disconnect):
         for key, session in list(sessions.items()):
             output('<tr>')
             if vpn_mode == 'Client':
-                self.print_client_session(session)
+                self.print_client_session(vpn, session)
             elif vpn_mode == 'Server':
-                self.print_server_session(vpn_id, session, show_disconnect)
+                self.print_server_session(vpn, vpn_id, session, show_disconnect)
             output('</tr>')
 
     def print_maps_htmlNew(self):
@@ -1450,7 +1442,7 @@ class OpenvpnHtmlPrinter(object):
                     ip = session.get('local_ip')
                     for name, jobman in mupif_monitor.jobmans.items():
                         #if( str(ip) in jobman['uri']):
-                        if( jobman['uri'].find(str(ip)) > 0 ):
+                        if(jobman['uri'].find(str(ip)) > 0 ):
                             nRunningJobs = jobman['numberofrunningjobs']
                             break
 
