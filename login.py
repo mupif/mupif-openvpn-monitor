@@ -97,7 +97,7 @@ def display_page(result, id, session_key=0):
             #print ("session key is "+str(session_key))
             print ("<HTML>\n")
             print ("<HEAD>\n")
-            print ("<meta http-equiv=\"refresh\" content=\"0;url=monitor.py?session_key={0}\">\n".format(session_key))
+            print (f"<meta http-equiv=\"refresh\" content=\"0;url=monitor.py?session_key={session_key}\">\n")
             print ("<title>You are going to be redirected</title>")
             print ("</HEAD>\n")
             print ("<BODY BGCOLOR = white>\n")

@@ -82,7 +82,7 @@ class ConfigLoader(object):
         contents = config.read(config_file)
 
         if not contents and config_file == './openvpn-monitor.conf':
-            warning('Config file does not exist or is unreadable: {0!s}'.format(config_file))
+            warning(f'Config file does not exist or is unreadable: {config_file!s}')
             if sys.prefix == '/usr':
                 conf_path = '/etc/'
             else:
@@ -91,9 +91,9 @@ class ConfigLoader(object):
             contents = config.read(config_file)
 
         if contents:
-            info('Using config file: {0!s}'.format(config_file))
+            info(f'Using config file: {config_file!s}')
         else:
-            warning('Config file does not exist or is unreadable: {0!s}'.format(config_file))
+            warning(f'Config file does not exist or is unreadable: {config_file!s}')
             self.load_default_settings()
 
         for section in config.sections():
@@ -120,7 +120,7 @@ class ConfigLoader(object):
             except configparser.NoOptionError:
                 pass
         if args.debug:
-            debug("=== begin section\n{0!s}\n=== end section".format(self.settings))
+            debug(f"=== begin section\n{self.settings!s}\n=== end section")
 
     def parse_vpn_section(self, config, section):
         self.vpns[section] = {}
@@ -130,16 +130,16 @@ class ConfigLoader(object):
             try:
                 vpn[option] = config.get(section, option)
                 if vpn[option] == -1:
-                    warning('CONFIG: skipping {0!s}'.format(option))
+                    warning(f'CONFIG: skipping {option!s}')
             except configparser.Error as e:
-                warning('CONFIG: {0!s} on option {1!s}: '.format(e, option))
+                warning(f'CONFIG: {e!s} on option {option!s}: ')
                 vpn[option] = None
         if 'show_disconnect' in vpn and vpn['show_disconnect'] == 'True':
             vpn['show_disconnect'] = True
         else:
             vpn['show_disconnect'] = False
         if args.debug:
-            debug("=== begin section\n{0!s}\n=== end section".format(vpn))
+            debug(f"=== begin section\n{vpn!s}\n=== end section")
 
 
 class OpenvpnMgmtInterface(object):
@@ -154,10 +154,10 @@ class OpenvpnMgmtInterface(object):
                 version = self.send_command('version\n')
                 sem_ver = semver(self.parse_version(version).split(' ')[1])
                 if sem_ver.minor == 4 and 'port' not in kwargs:
-                    command = 'client-kill {0!s}\n'.format(kwargs['client_id'])
+                    command = f"client-kill {kwargs['client_id']!s}\n"
                 else:
-                    command = 'kill {0!s}:{1!s}\n'.format(kwargs['ip'], kwargs['port'])
-                info('Sending command: {0!s}'.format(command))
+                    command = f"kill {kwargs['ip']!s}:{kwargs['port']!s}\n"
+                info(f'Sending command: {command!s}')
                 self.send_command(command)
                 self._socket_disconnect
 
@@ -209,19 +209,19 @@ class OpenvpnMgmtInterface(object):
                     if data.endswith('\r\n'):
                         break
         except socket.timeout as e:
-            vpn['error'] = '{0!s}'.format(e)
-            warning('socket timeout: {0!s}'.format(e))
+            vpn['error'] = f'{e!s}'
+            warning(f'socket timeout: {e!s}')
             vpn['socket_connected'] = False
             if self.s:
                 self.s.shutdown(socket.SHUT_RDWR)
                 self.s.close()
         except socket.error as e:
-            vpn['error'] = '{0!s}'.format(e.strerror)
-            warning('socket error: {0!s}'.format(e))
+            vpn['error'] = f'{e.strerror!s}'
+            warning(f'socket error: {e!s}')
             vpn['socket_connected'] = False
         except Exception as e:
-            vpn['error'] = '{0!s}'.format(e)
-            warning('unexpected error: {0!s}'.format(e))
+            vpn['error'] = f'{e!s}'
+            warning(f'unexpected error: {e!s}')
             vpn['socket_connected'] = False
 
     def _socket_disconnect(self):
@@ -243,7 +243,7 @@ class OpenvpnMgmtInterface(object):
             elif data.endswith("\nEND\r\n"):
                 break
         if args.debug:
-            debug("=== begin raw data\n{0!s}\n=== end raw data".format(data))
+            debug(f"=== begin raw data\n{data!s}\n=== end raw data")
         return data
 
     @staticmethod
@@ -252,7 +252,7 @@ class OpenvpnMgmtInterface(object):
         for line in data.splitlines():
             parts = line.split(',')
             if args.debug:
-                debug("=== begin split line\n{0!s}\n=== end split line".format(parts))
+                debug(f"=== begin split line\n{parts!s}\n=== end split line")
             if parts[0].startswith('>INFO') or \
                parts[0].startswith('END') or \
                parts[0].startswith('>CLIENT'):
@@ -279,7 +279,7 @@ class OpenvpnMgmtInterface(object):
         line = re.sub('SUCCESS: ', '', data)
         parts = line.split(',')
         if args.debug:
-            debug("=== begin split line\n{0!s}\n=== end split line".format(parts))
+            debug(f"=== begin split line\n{parts!s}\n=== end split line")
         stats['nclients'] = int(re.sub('nclients=', '', parts[0]))
         stats['bytesin'] = int(re.sub('bytesin=', '', parts[1]))
         stats['bytesout'] = int(re.sub('bytesout=', '', parts[2]).replace('\r\n', ''))
@@ -295,7 +295,7 @@ class OpenvpnMgmtInterface(object):
         for line in data.splitlines():
             parts = deque(line.split('\t'))
             if args.debug:
-                debug("=== begin split line\n{0!s}\n=== end split line".format(parts))
+                debug(f"=== begin split line\n{parts!s}\n=== end split line")
 
             if parts[0].startswith('END'):
                 break
@@ -404,7 +404,7 @@ class OpenvpnMgmtInterface(object):
         if args.debug:
             if sessions:
                 pretty_sessions = pformat(sessions)
-                debug("=== begin sessions\n{0!s}\n=== end sessions".format(pretty_sessions))
+                debug(f"=== begin sessions\n{pretty_sessions!s}\n=== end sessions")
             else:
                 debug("no sessions")
 
@@ -466,7 +466,7 @@ class OpenvpnHtmlPrinter(object):
         output('<meta charset="utf-8">')
         output('<meta http-equiv="X-UA-Compatible" content="IE=edge">')
         output('<meta name="viewport" content="width=device-width, initial-scale=1">')
-        output('<title>{0!s} OpenVPN Status Monitor</title>'.format(self.site))
+        output(f'<title>{self.site!s} OpenVPN Status Monitor</title>')
         output('<meta http-equiv="refresh" content="300" />')
 
         # css
@@ -501,7 +501,7 @@ class OpenvpnHtmlPrinter(object):
         output('</button>')
 
         output('<a class="navbar-brand" href="#">')
-        output('{0!s} OpenVPN Status Monitor</a>'.format(self.site))
+        output(f'{self.site!s} OpenVPN Status Monitor</a>')
 
         output('</div><div class="collapse navbar-collapse" id="myNavbar">')
         output('<ul class="nav navbar-nav"><li class="dropdown">')
@@ -512,7 +512,7 @@ class OpenvpnHtmlPrinter(object):
         for key, vpn in self.vpns:
             if vpn['name']:
                 anchor = vpn['name'].lower().replace(' ', '_')
-                output('<li><a href="#{0!s}">{1!s}</a></li>'.format(anchor, vpn['name']))
+                output(f"<li><a href=\"#{anchor!s}\">{vpn['name']!s}</a></li>")
         output('</ul></li>')
 
         if self.maps:
@@ -523,7 +523,7 @@ class OpenvpnHtmlPrinter(object):
         if self.logo:
             output('<a href="#" class="pull-right"><img alt="self.logo" ')
             output('style="max-height:46px; padding-top:3px;" ')
-            output('src="{0!s}"></a>'.format(self.logo))
+            output(f'src="{self.logo!s}"></a>')
 
         output('</div></div></nav>')
         output('<div class="container-fluid">')
@@ -549,7 +549,7 @@ class OpenvpnHtmlPrinter(object):
         output('tablesorter tablesorter-bootstrap">')
         output('<thead><tr>')
         for header in headers:
-            output('<th>{0!s}</th>'.format(header))
+            output(f'<th>{header!s}</th>')
         output('</tr></thead><tbody>')
 
     @staticmethod
@@ -559,9 +559,9 @@ class OpenvpnHtmlPrinter(object):
     @staticmethod
     def print_unavailable_vpn(vpn):
         anchor = vpn['name'].lower().replace(' ', '_')
-        output('<div class="panel panel-danger" id="{0!s}">'.format(anchor))
+        output(f'<div class="panel panel-danger" id="{anchor!s}">')
         output('<div class="panel-heading">')
-        output('<h3 class="panel-title">{0!s}</h3></div>'.format(vpn['name']))
+        output(f"<h3 class=\"panel-title\">{vpn['name']!s}</h3></div>")
         output('<div class="panel-body">')
         output('Could not connect to ')
         output('{0!s}:{1!s} ({2!s})</div></div>'.format(vpn['host'],
@@ -587,7 +587,7 @@ class OpenvpnHtmlPrinter(object):
         show_disconnect = vpn['show_disconnect']
 
         anchor = vpn['name'].lower().replace(' ', '_')
-        output('<div class="panel panel-success" id="{0!s}">'.format(anchor))
+        output(f'<div class="panel panel-success" id="{anchor!s}">')
         output('<div class="panel-heading"><h3 class="panel-title">{0!s}</h3>'.format(
             vpn['name']))
         output('</div><div class="panel-body">')
@@ -598,16 +598,16 @@ class OpenvpnHtmlPrinter(object):
         if vpn_mode == 'Client':
             output('<th>Remote IP Address</th>')
         output('</tr></thead><tbody>')
-        output('<tr><td>{0!s}</td>'.format(vpn_mode))
-        output('<td>{0!s}</td>'.format(connection))
-        output('<td>{0!s}</td>'.format(pingable))
-        output('<td>{0!s}</td>'.format(nclients))
-        output('<td>{0!s} ({1!s})</td>'.format(bytesin, naturalsize(bytesin, binary=True)))
-        output('<td>{0!s} ({1!s})</td>'.format(bytesout, naturalsize(bytesout, binary=True)))
-        output('<td>{0!s}</td>'.format(up_since.strftime(self.datetime_format)))
-        output('<td>{0!s}</td>'.format(local_ip))
+        output(f'<tr><td>{vpn_mode!s}</td>')
+        output(f'<td>{connection!s}</td>')
+        output(f'<td>{pingable!s}</td>')
+        output(f'<td>{nclients!s}</td>')
+        output(f'<td>{bytesin!s} ({naturalsize(bytesin, binary=True)!s})</td>')
+        output(f'<td>{bytesout!s} ({naturalsize(bytesout, binary=True)!s})</td>')
+        output(f'<td>{up_since.strftime(self.datetime_format)!s}</td>')
+        output(f'<td>{local_ip!s}</td>')
         if vpn_mode == 'Client':
-            output('<td>{0!s}</td>'.format(remote_ip))
+            output(f'<td>{remote_ip!s}</td>')
         output('</tr></tbody></table>')
 
         if vpn_mode == 'Client' or nclients > 0:
@@ -615,7 +615,7 @@ class OpenvpnHtmlPrinter(object):
             self.print_session_table(vpn_id, vpn_mode, vpn_sessions, show_disconnect)
             self.print_session_table_footer()
 
-        output('<span class="label label-default">{0!s}</span>'.format(vpn['version']))
+        output(f"<span class=\"label label-default\">{vpn['version']!s}</span>")
         output('</div></div>')
 
     @staticmethod
@@ -625,39 +625,39 @@ class OpenvpnHtmlPrinter(object):
         tcpudp_r = session['tcpudp_read']
         tcpudp_w = session['tcpudp_write']
         auth_r = session['auth_read']
-        output('<td>{0!s} ({1!s})</td>'.format(tuntap_r, naturalsize(tuntap_r, binary=True)))
-        output('<td>{0!s} ({1!s})</td>'.format(tuntap_w, naturalsize(tuntap_w, binary=True)))
-        output('<td>{0!s} ({1!s})</td>'.format(tcpudp_r, naturalsize(tcpudp_w, binary=True)))
-        output('<td>{0!s} ({1!s})</td>'.format(tcpudp_w, naturalsize(tcpudp_w, binary=True)))
-        output('<td>{0!s} ({1!s})</td>'.format(auth_r, naturalsize(auth_r, binary=True)))
+        output(f'<td>{tuntap_r!s} ({naturalsize(tuntap_r, binary=True)!s})</td>')
+        output(f'<td>{tuntap_w!s} ({naturalsize(tuntap_w, binary=True)!s})</td>')
+        output(f'<td>{tcpudp_r!s} ({naturalsize(tcpudp_w, binary=True)!s})</td>')
+        output(f'<td>{tcpudp_w!s} ({naturalsize(tcpudp_w, binary=True)!s})</td>')
+        output(f'<td>{auth_r!s} ({naturalsize(auth_r, binary=True)!s})</td>')
 
     def print_server_session(self, vpn_id, session, show_disconnect):
         total_time = str(datetime.now() - session['connected_since'])[:-7]
         bytes_recv = session['bytes_recv']
         bytes_sent = session['bytes_sent']
-        output('<td>{0!s}</td>'.format(session['username']))
-        output('<td>{0!s}</td>'.format(session['local_ip']))
-        output('<td>{0!s}</td>'.format(session['remote_ip']))
+        output(f"<td>{session['username']!s}</td>")
+        output(f"<td>{session['local_ip']!s}</td>")
+        output(f"<td>{session['remote_ip']!s}</td>")
 
         if 'location' in session:
             if session['location'] == 'RFC1918':
                 output('<td>RFC1918</td>')
             else:
-                flag = '{0!s}flags/{1!s}.png'.format(image_path, session['location'].lower())
+                flag = f"{image_path!s}flags/{session['location'].lower()!s}.png"
                 if 'city' in session and 'country_name' in session:
                     country = session['country_name']
                     city = session['city']
                     if city:
-                        full_location = '{0!s}, {1!s}'.format(city, country)
+                        full_location = f'{city!s}, {country!s}'
                     else:
                         full_location = country
                 output('<td><img src="{0!s}" title="{1!s}" alt="{1!s}" /> '.format(flag, full_location))
-                output('{0!s}</td>'.format(full_location))
+                output(f'{full_location!s}</td>')
         else:
             output('<td>Unknown</td>')
 
-        output('<td>{0!s} ({1!s})</td>'.format(bytes_recv, naturalsize(bytes_recv, binary=True)))
-        output('<td>{0!s} ({1!s})</td>'.format(bytes_sent, naturalsize(bytes_sent, binary=True)))
+        output(f'<td>{bytes_recv!s} ({naturalsize(bytes_recv, binary=True)!s})</td>')
+        output(f'<td>{bytes_sent!s} ({naturalsize(bytes_sent, binary=True)!s})</td>')
         output('<td>{0!s}</td>'.format(
             session['connected_since'].strftime(self.datetime_format)))
         if 'last_seen' in session:
@@ -665,15 +665,15 @@ class OpenvpnHtmlPrinter(object):
                 session['last_seen'].strftime(self.datetime_format)))
         else:
             output('<td>ERROR</td>')
-        output('<td>{0!s}</td>'.format(total_time))
+        output(f'<td>{total_time!s}</td>')
         if show_disconnect:
             output('<td><form method="post">')
-            output('<input type="hidden" name="vpn_id" value="{0!s}">'.format(vpn_id))
+            output(f'<input type="hidden" name="vpn_id" value="{vpn_id!s}">')
             if 'port' in session:
-                output('<input type="hidden" name="ip" value="{0!s}">'.format(session['remote_ip']))
-                output('<input type="hidden" name="port" value="{0!s}">'.format(session['port']))
+                output(f"<input type=\"hidden\" name=\"ip\" value=\"{session['remote_ip']!s}\">")
+                output(f"<input type=\"hidden\" name=\"port\" value=\"{session['port']!s}\">")
             if 'client_id' in session:
-                output('<input type="hidden" name="client_id" value="{0!s}">'.format(session['client_id']))
+                output(f"<input type=\"hidden\" name=\"client_id\" value=\"{session['client_id']!s}\">")
             output('<button type="submit" class="btn btn-xs btn-danger">')
             output('<span class="glyphicon glyphicon-remove"></span> ')
             output('Disconnect</button></form></td>')
@@ -693,7 +693,7 @@ class OpenvpnHtmlPrinter(object):
         output('<div id="map_canvas" style="height:500px"></div>')
         output('<script type="text/javascript">')
         output('var map = L.map("map_canvas");')
-        output('var centre = L.latLng({0!s}, {1!s});'.format(self.latitude, self.longitude))
+        output(f'var centre = L.latLng({self.latitude!s}, {self.longitude!s});')
         output('map.setView(centre, 8);')
         output('url = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";')
         output('var layer = new L.TileLayer(url, {});')
@@ -730,7 +730,7 @@ def main(**kwargs):
     OpenvpnHtmlPrinter(cfg, monitor)
     if args.debug:
         pretty_vpns = pformat((dict(monitor.vpns)))
-        debug("=== begin vpns\n{0!s}\n=== end vpns".format(pretty_vpns))
+        debug(f"=== begin vpns\n{pretty_vpns!s}\n=== end vpns")
 
 
 def get_args():
