@@ -27,6 +27,7 @@ import GeoIP
 import sys
 import os
 import cgi
+import warnings
 #import cgitb
 #cgitb.enable()
 from datetime import datetime
