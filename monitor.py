@@ -377,7 +377,7 @@ class WireguardMgmtInterface(object):
         peerMapJson=vpn.get('peer_map',None)
         peerMap=(json.load(open(peerMapJson,'r')) if peerMapJson else {})
         try:
-            dta=json.loads(subprocess.check_output(['sudo','/usr/share/doc/wireguard-tools/examples/json/wg-json']))
+            dta=json.loads(subprocess.check_output(['sudo','-S','/usr/share/doc/wireguard-tools/examples/json/wg-json']))
         except subprocess.CalledProcessError:
             warnings.warn('Calling wg-json failed. You might need to add the line "ALL ALL=NOPASSWD: /usr/share/doc/wireguard-tools/examples/json/wg-json" to /etc/sudoers.d/10-wireguard-show.conf (and run chmod 0440 /etc/sudoers.d/10-wireguard-show.conf) to get wireguard information as regular user.')
             vpn['socket_connected']=False
