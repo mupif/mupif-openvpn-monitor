@@ -1521,7 +1521,10 @@ def get_args():
                         required=False, default='./mupif-monitor.conf',
                         help='Path to config file mupif-monitor.conf')
     parser.add_argument('--dump-only',action='store_true',default=False,help='Only dump current data and exit')
-    return parser.parse_args()
+
+    args=sys.argv
+    if 'MUPIF_MONITOR_ARGS' in os.environ: args=os.environ['MUPIF_MONITOR_ARGS'].split(':')
+    return parser.parse_args(args=args)
 
 # print(__name__)
 if __name__ == '__main__':
