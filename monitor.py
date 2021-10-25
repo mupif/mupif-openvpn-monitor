@@ -243,7 +243,7 @@ class mupifMonitor(object):
         else:
             self.jobmans={}
             # collect all registered jobmans from nameserver using jobman metadata tag
-            if (self.ns):
+            if self.ns is not None:
                 query = self.ns.yplookup(meta_any={"type:jobmanager"}) # XXX this is to be tested more
                 info(query)
                 threads = []
@@ -1540,10 +1540,9 @@ if __name__ == '__main__':
     image_path = 'images/'
     main()
 else:
-    class args(object):
-        debug = False
-        config = './openvpn-monitor.conf'
-        mupifconfig='./mupif-monitor.conf'
+    # the defaults are the same
+    # use MUPIF_MONITOR_ARGS env var to extract non-default options
+    args = get_args()
 
     wsgi = True
     wsgi_output = ''
