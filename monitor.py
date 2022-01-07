@@ -452,8 +452,9 @@ class WireguardMgmtInterface(object):
             session['bytes_sent']=peerData.get('transferTx',0)
             session['connected_since']=datetime.utcfromtimestamp(0)
             # TODO: read wireguard config and put friendly name here
-            if peerKey in peerMap: session['username']=peerMap[peerKey]+'<br>'+peerKey[:10]+'‥'
-            else: session['username']=peerKey[:10]+'‥'
+            # don't use unicode ellipsis as it renders incorrectly in the HTML
+            if peerKey in peerMap: session['username']=peerMap[peerKey]+'<br>'+peerKey[:10]+'...'
+            else: session['username']=peerKey[:10]+'...'
             # the timestamp  from wg-json is in local time, not UTC
             session['last_seen']=datetime.fromtimestamp(peerData.get('latestHandshake',0))
 
