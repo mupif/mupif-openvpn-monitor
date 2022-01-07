@@ -1,9 +1,10 @@
-GeoIP==1.3.2
-humanize==0.5.1
-ipaddr==2.1.11; python_version <= '2.7'
-six==1.10.0
-bottle==0.12.19
-semantic_version==2.6.0
-hashlib
-
-
+GeoIP
+humanize
+ipaddr
+bottle>=0.12.19
+semantic_version
+python-keycloak
+netifaces
+# don't put mupif into requirements as it would pull a specific branch
+# just leave whatever is installed already
+# git+https://github.com/mupif/mupif.git@Musicode
