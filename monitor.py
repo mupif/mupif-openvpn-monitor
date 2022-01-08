@@ -387,7 +387,7 @@ class WireguardMgmtInterface(object):
         import netifaces
         ifaceip=netifaces.ifaddresses(iface)
         if netifaces.AF_INET in ifaceip: local_ip=ip_address(ifaceip[netifaces.AF_INET][0]['addr'])
-        elif netiface.AF_INET6 in ifaceip: local_ip=ip_address(ifaceip[netifaces.AF_INET6][0]['addr'])
+        elif netifaces.AF_INET6 in ifaceip: local_ip=ip_address(ifaceip[netifaces.AF_INET6][0]['addr'])
         else: local_ip='?'
         vpn['state']={
             'up_since':datetime.utcfromtimestamp(0),
