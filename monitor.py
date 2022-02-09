@@ -272,13 +272,13 @@ class mupifMonitor(object):
         try:
             #print("Querying mupifDB status:\n")
             #print ('http://'+self.cfg['mupifdb_ip']+":"+self.cfg['mupifdb_port']+'/status')
-            r=requests.get('http://'+self.cfg['mupifdb_ip']+":"+self.cfg['mupifdb_port']+'/status')
+            r=requests.get('http://'+self.cfg['mupifdb_ip']+":"+self.cfg['mupifdb_port']+'/main?action=get_status')
             #print("url:",  r.url)
             #print("Text:", r.text)
             status=r.json()
             #print(status)
             
-            self.cfg['mupifdb_status'] = status['result'][0]
+            self.cfg['mupifdb_status'] = status['result']
         except:
             self.cfg['mupifdb_status'] = {}
             
