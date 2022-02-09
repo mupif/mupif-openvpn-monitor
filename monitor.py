@@ -273,7 +273,7 @@ class mupifMonitor(object):
             #print("Querying mupifDB status:\n")
             ip=self.cfg['mupifdb_ip']
             req='http://'+(f'[{ip}]' if ':' in ip else ip)+":"+self.cfg['mupifdb_port']+'/main?action=get_status'
-            print(req)
+            #print(req)
             r=requests.get(req)
             #print("url:",  r.url)
             #print("Text:", r.text)
