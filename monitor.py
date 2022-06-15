@@ -295,12 +295,20 @@ class mupifMonitor(object):
         jobmanRec['note']=''
         jobmanRec['numberofrunningjobs']=''
         jobmanRec['showJobs'] = 'ON'
+        jobmanRec['totalJobs']='?'
         try:
             j = Pyro5.api.Proxy(uri)
             # j._pyroHmacKey = hmackey
 
             sig=j.getApplicationSignature()
-            status = j.getStatus()
+            try:
+                statusex=j.getStatusExtended()
+                status=statusex['currJobs']
+                jobmanRec['totalJobs']=status['totalJobs']
+            # older JobManager without getStatusExtended
+            except AttributeError:
+                status = j.getStatus()
+
             #sig = 'KO'
 
             jobmanRec['status']="OK"
@@ -999,7 +1007,7 @@ class OpenvpnHtmlPrinter(object):
     @staticmethod
     def print_session_table_headers(vpn, vpn_mode, show_disconnect):
         isWg=(vpn['type']=='wireguard')
-        if isWg: server_headers=['Name / pubkey','VPN IP','Remote IP','Location','Bytes In','Bytes Out','Last handshake']
+        if isWg: server_headers=['Name / pubkey','VPN IP','Location','Bytes In','Bytes Out','Last handshake']
         else: server_headers = ['Username / Hostname', 'VPN IP', 'Remote IP', 'Location', 'Bytes In', 'Bytes Out', 'Connected Since', 'Last Ping', 'Time Online']
 
         if show_disconnect:
@@ -1194,7 +1202,7 @@ class OpenvpnHtmlPrinter(object):
                 if(userGroup == name or userGroup == 'CTU' ):
                     output('     <tr class = "tablesorter"> <td> <button id="button" type="button" class="btn btn-primary" data-toggle="collapse" data-target="#collapseme_{6!s}"><span class="glyphicon glyphicon-plus"></button></td><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td><td class="{5!s}">{4!s}</td><td><a class = "button" href="delete_jm.py?jobManName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(name, jobman['note'], jobman['uri'], jobman['numberofrunningjobs'], jobman['status'], trclass, index))
                 else:
-                    output(f"     <tr class = \"tablesorter\"> <td> <button id=\"button\" type=\"button\" class=\"btn btn-primary\" data-toggle=\"collapse\" data-target=\"#collapseme_{index!s}\"><span class=\"glyphicon glyphicon-plus\"></button></td><td>{name!s}</td><td>{jobman['note']!s}</td><td>{jobman['uri']!s}</td><td>{jobman['numberofrunningjobs']!s}</td><td class=\"{trclass!s}\">{jobman['status']!s}</td></tr>")
+                    output(f"     <tr class = \"tablesorter\"> <td> <button id=\"button\" type=\"button\" class=\"btn btn-primary\" data-toggle=\"collapse\" data-target=\"#collapseme_{index!s}\"><span class=\"glyphicon glyphicon-plus\"></button></td><td>{name!s}</td><td>{jobman['note']!s}</td><td>{jobman['uri']!s}</td><td>{jobman['numberofrunningjobs']!s} / {jobman['totalJobs']!s}</td><td class=\"{trclass!s}\">{jobman['status']!s}</td></tr>")
 
                 jobMan = mp.pyroutil.connectJobManager(mupif_monitor.ns, name)
                 ##jobMan.terminateJob('27@Abaqus@Mupif.LIST')
@@ -1208,16 +1216,17 @@ class OpenvpnHtmlPrinter(object):
                 output(f'        <table id = "JobTable{index!s}" class="table table-borderless">')
                 output('<thead><tr><th>Job ID</th><th>User@host</th><th>Running time</th></thead>')
 
+                # SimpleJobManager used to return namedtuple, which is deserialized as unnamed tuple
+                # newer version will return dict, which is what we try first
                 status = jobMan.getStatus()
                 for rec in status:
-
-                    jobid = rec[0]
+                    try: jobid,running,user,uri=status['key'],status['running'],status['user'],status['uri']
+                    except TypeError: jobid,running,user,uri=rec[0],rec[1],rec[2],rec[3]
                     #print(jobid)
-                    user = rec[2]
-                    mins = rec[1]//60
-                    hrs  = mins//24
+                    mins = running//60
+                    hrs  = running//24
                     mins = mins%60
-                    sec  = int(rec[1])%60
+                    sec  = int(running)%60
                     jobtime = "%02d:%02d:%02d"%(hrs, mins, sec)
                     if(userGroup == name or userGroup == "CTU" ):
                         output('<tr><td>{0!s}</td><td>{2!s}</td><td>{3!s}</td></td><td><a class = "button" href="deleteJM.py?jobManName={4!s}&jobName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(jobid, user, jobtime, name))
@@ -1233,7 +1242,7 @@ class OpenvpnHtmlPrinter(object):
                 if(userGroup == name or userGroup == "CTU"):
                     output('<tr><td></td><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td><td class="{5!s}">{4!s}</td><td><a class = "button" href="delete_jm.py?jobManName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(name, jobman['note'], jobman['uri'], jobman['numberofrunningjobs'], jobman['status'], trclass))
                 else:
-                    output(f"<tr><td></td><td>{name!s}</td><td>{jobman['note']!s}</td><td>{jobman['uri']!s}</td><td>{jobman['numberofrunningjobs']!s}</td><td class=\"{trclass!s}\">{jobman['status']!s}</td></tr>")
+                    output(f"<tr><td></td><td>{name!s}</td><td>{jobman['note']!s}</td><td>{jobman['uri']!s}</td><td>{jobman['numberofrunningjobs']!s} / {jobman['totalJobs']!s}</td><td class=\"{trclass!s}\">{jobman['status']!s}</td></tr>")
 
                     
         output('</tbody></table>')
@@ -1302,7 +1311,7 @@ class OpenvpnHtmlPrinter(object):
         bytes_sent = session['bytes_sent']
         output(f"<td>{session['username']!s}</td>")
         output(f"<td>{session['local_ip']!s}</td>")
-        output(f"<td>{session['remote_ip']!s}</td>")
+        # output(f"<td>{session['remote_ip']!s}</td>")
 
         if 'location' in session:
             if session['location'] == 'RFC1918':
@@ -1348,6 +1357,8 @@ class OpenvpnHtmlPrinter(object):
             if vpn_mode == 'Client':
                 self.print_client_session(vpn, session)
             elif vpn_mode == 'Server':
+                # filter out inactive clients
+                if 'last_seen' not in session or session['last_seen']==datetime.fromtimestamp(0): continue
                 self.print_server_session(vpn, vpn_id, session, show_disconnect)
             output('</tr>')
 
