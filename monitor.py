@@ -379,9 +379,11 @@ class mupifMonitor(object):
 
     def collect_sched_data(self, name, uri, schedRec):
         schedRec['note']=''
+        schedRec['status']='failed'
         s=datetime.now()
         try:
             j=Pyro5.api.Proxy(uri)
+            schedRec['status']='OK'
             schedRec['stats']=j.getStatistics()
         except Pyro5.errors.CommunicationError:
             jobmanRec['note']=f"Cannot connect to scheduler {name}"
@@ -1265,12 +1267,12 @@ class OpenvpnHtmlPrinter(object):
         output('</tbody></table>')
 
         output('      <table id="schedulers" class="table table-striped table-bordered tablesorter table-hover table-condensed table-responsive tablesorter tablesorter-bootstrap">')
-        output('         <thead><tr><th></th><th id ="id">Scheduler</th><th>Signature</th><th>URI</th><th>Running</th><th>Scheduled</th><th>Processed</th><th>Finished</th><th>Failed</th></tr></thead>')
+        output('         <thead><tr><th id ="id">Scheduler</th><th>Signature</th><th>URI</th><th>Running</th><th>Scheduled</th><th>Processed</th><th>Finished</th><th>Failed</th></tr></thead>')
         output('         <tbody>')
 
         for name, sched in mupif_monitor.scheds.items():
             trclass='success' if sched['status']=='OK' else 'warning' # unused here
-            output('''        <tr><td>{name}</td><td>??</td><td>{sched["uri"]}</td>
+            output(f'''        <tr><td>{name}</td><td>??</td><td>{sched["uri"]}</td>
             <td>{sched["stats"]["runningTasks"]}</td>
             <td>{sched["stats"]["scheduledTasks"]}</td>
             <td>{sched["stats"]["processedTasks"]}</td>
