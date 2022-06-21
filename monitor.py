@@ -234,6 +234,7 @@ class mupifMonitor(object):
 
         self.cfg = cfg.mupif
         self.jobmans = cfg.jobmans
+        self.scheds = {}
         self.collect_data()
 
         if False:
@@ -244,18 +245,26 @@ class mupifMonitor(object):
             self.jobmans={}
             # collect all registered jobmans from nameserver using jobman metadata tag
             if self.ns is not None:
-                query = self.ns.yplookup(meta_any={"type:jobmanager"}) # XXX this is to be tested more
-                info(query)
+                queryJobman = self.ns.yplookup(meta_any={"type:jobmanager"}) # XXX this is to be tested more
+                querySched = self.ns.yplookup(meta_any={"type:scheduler"})
+                info(queryJobman)
+                info(querySched)
                 threads = []
                 start = datetime.now()
-                for name, uri in query.items():
+                for name, uri in queryJobman.items():
                     self.jobmans[name] = {}
                     jobmanRec=self.jobmans[name];
                     jobmanRec['uri']=uri[0] # yplookup returns (URI, metadata) tuple
                     #self.collect_jobman_data(name, uri, jobmanRec)
                     thread = threading.Thread(target=self.collect_jobman_data, args=(name, uri[0], jobmanRec))
-                    threads.append(thread)                   
-                
+                    threads.append(thread)
+
+                for name, (uri,metadata) in querySched.items():
+                    self.scheds[name]={}
+                    self.scheds[name]['uri']=uri
+                    thread=threading.Thread(target=self.collect_sched_data,args=(name,uri,self.scheds[name]))
+                    threads.append(thread)
+
                 for t in threads:
                     t.start()
 
@@ -368,7 +377,15 @@ class mupifMonitor(object):
     def _socket_recv(self, length):
         return self.s.recv(length).decode('utf-8')
 
-
+    def collect_sched_data(self, name, uri, schedRec):
+        schedRec['note']=''
+        s=datetime.now()
+        try:
+            j=Pyro5.api.Proxy(uri)
+            schedRec['stats']=j.getStatistics()
+        except Pyro5.errors.CommunicationError:
+            jobmanRec['note']=f"Cannot connect to scheduler {name}"
+        schedRec['note']+="["+str(datetime.now()-s)+"]"
 
 class WireguardMgmtInterface(object):
     def __init__(self,cfg):
@@ -1247,6 +1264,21 @@ class OpenvpnHtmlPrinter(object):
                     
         output('</tbody></table>')
 
+        output('      <table id="schedulers" class="table table-striped table-bordered tablesorter table-hover table-condensed table-responsive tablesorter tablesorter-bootstrap">')
+        output('         <thead><tr><th></th><th id ="id">Scheduler</th><th>Signature</th><th>URI</th><th>Running</th><th>Scheduled</th><th>Processed</th><th>Finished</th><th>Failed</th></tr></thead>')
+        output('         <tbody>')
+
+        for name, sched in mupif_monitor.scheds.items():
+            trclass='success' if sched['status']=='OK' else 'warning' # unused here
+            output('''        <tr><td>{name}</td><td>??</td><td>{sched["uri"]}</td>
+            <td>{sched["stats"]["runningTasks"]}</td>
+            <td>{sched["stats"]["scheduledTasks"]}</td>
+            <td>{sched["stats"]["processedTasks"]}</td>
+            <td>{sched["stats"]["finishedTasks"]}</td>
+            <td>{sched["stats"]["failedTasks"]}</td>
+        </tr>''')
+
+        output('</tbody></table>')
 
 
         output('</div></div>')
