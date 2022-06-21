@@ -234,6 +234,7 @@ class mupifMonitor(object):
 
         self.cfg = cfg.mupif
         self.jobmans = cfg.jobmans
+        self.scheds = {}
         self.collect_data()
 
         if False:
@@ -244,18 +245,26 @@ class mupifMonitor(object):
             self.jobmans={}
             # collect all registered jobmans from nameserver using jobman metadata tag
             if self.ns is not None:
-                query = self.ns.yplookup(meta_any={"type:jobmanager"}) # XXX this is to be tested more
-                info(query)
+                queryJobman = self.ns.yplookup(meta_any={"type:jobmanager"}) # XXX this is to be tested more
+                querySched = self.ns.yplookup(meta_any={"type:scheduler"})
+                info(queryJobman)
+                info(querySched)
                 threads = []
                 start = datetime.now()
-                for name, uri in query.items():
+                for name, uri in queryJobman.items():
                     self.jobmans[name] = {}
                     jobmanRec=self.jobmans[name];
                     jobmanRec['uri']=uri[0] # yplookup returns (URI, metadata) tuple
                     #self.collect_jobman_data(name, uri, jobmanRec)
                     thread = threading.Thread(target=self.collect_jobman_data, args=(name, uri[0], jobmanRec))
-                    threads.append(thread)                   
-                
+                    threads.append(thread)
+
+                for name, (uri,metadata) in querySched.items():
+                    self.scheds[name]={}
+                    self.scheds[name]['uri']=uri
+                    thread=threading.Thread(target=self.collect_sched_data,args=(name,uri,self.scheds[name]))
+                    threads.append(thread)
+
                 for t in threads:
                     t.start()
 
@@ -271,14 +280,16 @@ class mupifMonitor(object):
         self.ns_socket_connect(nshost=self.cfg['nameserver_ip'],nsport=self.cfg['nameserver_port'])
         try:
             #print("Querying mupifDB status:\n")
-            #print ('http://'+self.cfg['mupifdb_ip']+":"+self.cfg['mupifdb_port']+'/status')
-            r=requests.get('http://'+self.cfg['mupifdb_ip']+":"+self.cfg['mupifdb_port']+'/status')
+            ip=self.cfg['mupifdb_ip']
+            req='http://'+(f'[{ip}]' if ':' in ip else ip)+":"+self.cfg['mupifdb_port']+'/main?action=get_status'
+            #print(req)
+            r=requests.get(req)
             #print("url:",  r.url)
             #print("Text:", r.text)
             status=r.json()
             #print(status)
             
-            self.cfg['mupifdb_status'] = status['result'][0]
+            self.cfg['mupifdb_status'] = status['result']
         except:
             self.cfg['mupifdb_status'] = {}
             
@@ -293,12 +304,20 @@ class mupifMonitor(object):
         jobmanRec['note']=''
         jobmanRec['numberofrunningjobs']=''
         jobmanRec['showJobs'] = 'ON'
+        jobmanRec['totalJobs']='?'
         try:
             j = Pyro5.api.Proxy(uri)
             # j._pyroHmacKey = hmackey
 
             sig=j.getApplicationSignature()
-            status = j.getStatus()
+            try:
+                statusex=j.getStatusExtended()
+                status=statusex['currJobs']
+                jobmanRec['totalJobs']=status['totalJobs']
+            # older JobManager without getStatusExtended
+            except AttributeError:
+                status = j.getStatus()
+
             #sig = 'KO'
 
             jobmanRec['status']="OK"
@@ -358,7 +377,15 @@ class mupifMonitor(object):
     def _socket_recv(self, length):
         return self.s.recv(length).decode('utf-8')
 
-
+    def collect_sched_data(self, name, uri, schedRec):
+        schedRec['note']=''
+        s=datetime.now()
+        try:
+            j=Pyro5.api.Proxy(uri)
+            schedRec['stats']=j.getStatistics()
+        except Pyro5.errors.CommunicationError:
+            jobmanRec['note']=f"Cannot connect to scheduler {name}"
+        schedRec['note']+="["+str(datetime.now()-s)+"]"
 
 class WireguardMgmtInterface(object):
     def __init__(self,cfg):
@@ -387,7 +414,7 @@ class WireguardMgmtInterface(object):
         import netifaces
         ifaceip=netifaces.ifaddresses(iface)
         if netifaces.AF_INET in ifaceip: local_ip=ip_address(ifaceip[netifaces.AF_INET][0]['addr'])
-        elif netiface.AF_INET6 in ifaceip: local_ip=ip_address(ifaceip[netifaces.AF_INET6][0]['addr'])
+        elif netifaces.AF_INET6 in ifaceip: local_ip=ip_address(ifaceip[netifaces.AF_INET6][0]['addr'])
         else: local_ip='?'
         vpn['state']={
             'up_since':datetime.utcfromtimestamp(0),
@@ -452,8 +479,9 @@ class WireguardMgmtInterface(object):
             session['bytes_sent']=peerData.get('transferTx',0)
             session['connected_since']=datetime.utcfromtimestamp(0)
             # TODO: read wireguard config and put friendly name here
-            if peerKey in peerMap: session['username']=peerMap[peerKey]+'<br>'+peerKey[:10]+'‥'
-            else: session['username']=peerKey[:10]+'‥'
+            # don't use unicode ellipsis as it renders incorrectly in the HTML
+            if peerKey in peerMap: session['username']=peerMap[peerKey]+'<br>'+peerKey[:10]+'...'
+            else: session['username']=peerKey[:10]+'...'
             # the timestamp  from wg-json is in local time, not UTC
             session['last_seen']=datetime.fromtimestamp(peerData.get('latestHandshake',0))
 
@@ -996,7 +1024,7 @@ class OpenvpnHtmlPrinter(object):
     @staticmethod
     def print_session_table_headers(vpn, vpn_mode, show_disconnect):
         isWg=(vpn['type']=='wireguard')
-        if isWg: server_headers=['Name / pubkey','VPN IP','Remote IP','Location','Bytes In','Bytes Out','Last handshake']
+        if isWg: server_headers=['Name / pubkey','VPN IP','Location','Bytes In','Bytes Out','Last handshake']
         else: server_headers = ['Username / Hostname', 'VPN IP', 'Remote IP', 'Location', 'Bytes In', 'Bytes Out', 'Connected Since', 'Last Ping', 'Time Online']
 
         if show_disconnect:
@@ -1191,7 +1219,7 @@ class OpenvpnHtmlPrinter(object):
                 if(userGroup == name or userGroup == 'CTU' ):
                     output('     <tr class = "tablesorter"> <td> <button id="button" type="button" class="btn btn-primary" data-toggle="collapse" data-target="#collapseme_{6!s}"><span class="glyphicon glyphicon-plus"></button></td><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td><td class="{5!s}">{4!s}</td><td><a class = "button" href="delete_jm.py?jobManName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(name, jobman['note'], jobman['uri'], jobman['numberofrunningjobs'], jobman['status'], trclass, index))
                 else:
-                    output(f"     <tr class = \"tablesorter\"> <td> <button id=\"button\" type=\"button\" class=\"btn btn-primary\" data-toggle=\"collapse\" data-target=\"#collapseme_{index!s}\"><span class=\"glyphicon glyphicon-plus\"></button></td><td>{name!s}</td><td>{jobman['note']!s}</td><td>{jobman['uri']!s}</td><td>{jobman['numberofrunningjobs']!s}</td><td class=\"{trclass!s}\">{jobman['status']!s}</td></tr>")
+                    output(f"     <tr class = \"tablesorter\"> <td> <button id=\"button\" type=\"button\" class=\"btn btn-primary\" data-toggle=\"collapse\" data-target=\"#collapseme_{index!s}\"><span class=\"glyphicon glyphicon-plus\"></button></td><td>{name!s}</td><td>{jobman['note']!s}</td><td>{jobman['uri']!s}</td><td>{jobman['numberofrunningjobs']!s} / {jobman['totalJobs']!s}</td><td class=\"{trclass!s}\">{jobman['status']!s}</td></tr>")
 
                 jobMan = mp.pyroutil.connectJobManager(mupif_monitor.ns, name)
                 ##jobMan.terminateJob('27@Abaqus@Mupif.LIST')
@@ -1205,16 +1233,17 @@ class OpenvpnHtmlPrinter(object):
                 output(f'        <table id = "JobTable{index!s}" class="table table-borderless">')
                 output('<thead><tr><th>Job ID</th><th>User@host</th><th>Running time</th></thead>')
 
+                # SimpleJobManager used to return namedtuple, which is deserialized as unnamed tuple
+                # newer version will return dict, which is what we try first
                 status = jobMan.getStatus()
                 for rec in status:
-
-                    jobid = rec[0]
+                    try: jobid,running,user,uri=status['key'],status['running'],status['user'],status['uri']
+                    except TypeError: jobid,running,user,uri=rec[0],rec[1],rec[2],rec[3]
                     #print(jobid)
-                    user = rec[2]
-                    mins = rec[1]//60
-                    hrs  = mins//24
+                    mins = running//60
+                    hrs  = running//24
                     mins = mins%60
-                    sec  = int(rec[1])%60
+                    sec  = int(running)%60
                     jobtime = "%02d:%02d:%02d"%(hrs, mins, sec)
                     if(userGroup == name or userGroup == "CTU" ):
                         output('<tr><td>{0!s}</td><td>{2!s}</td><td>{3!s}</td></td><td><a class = "button" href="deleteJM.py?jobManName={4!s}&jobName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(jobid, user, jobtime, name))
@@ -1230,11 +1259,26 @@ class OpenvpnHtmlPrinter(object):
                 if(userGroup == name or userGroup == "CTU"):
                     output('<tr><td></td><td>{0!s}</td><td>{1!s}</td><td>{2!s}</td><td>{3!s}</td><td class="{5!s}">{4!s}</td><td><a class = "button" href="delete_jm.py?jobManName={0!s}"><span class="glyphicon glyphicon-trash"></span></a></td></tr>'.format(name, jobman['note'], jobman['uri'], jobman['numberofrunningjobs'], jobman['status'], trclass))
                 else:
-                    output(f"<tr><td></td><td>{name!s}</td><td>{jobman['note']!s}</td><td>{jobman['uri']!s}</td><td>{jobman['numberofrunningjobs']!s}</td><td class=\"{trclass!s}\">{jobman['status']!s}</td></tr>")
+                    output(f"<tr><td></td><td>{name!s}</td><td>{jobman['note']!s}</td><td>{jobman['uri']!s}</td><td>{jobman['numberofrunningjobs']!s} / {jobman['totalJobs']!s}</td><td class=\"{trclass!s}\">{jobman['status']!s}</td></tr>")
 
                     
         output('</tbody></table>')
 
+        output('      <table id="schedulers" class="table table-striped table-bordered tablesorter table-hover table-condensed table-responsive tablesorter tablesorter-bootstrap">')
+        output('         <thead><tr><th></th><th id ="id">Scheduler</th><th>Signature</th><th>URI</th><th>Running</th><th>Scheduled</th><th>Processed</th><th>Finished</th><th>Failed</th></tr></thead>')
+        output('         <tbody>')
+
+        for name, sched in mupif_monitor.scheds.items():
+            trclass='success' if sched['status']=='OK' else 'warning' # unused here
+            output('''        <tr><td>{name}</td><td>??</td><td>{sched["uri"]}</td>
+            <td>{sched["stats"]["runningTasks"]}</td>
+            <td>{sched["stats"]["scheduledTasks"]}</td>
+            <td>{sched["stats"]["processedTasks"]}</td>
+            <td>{sched["stats"]["finishedTasks"]}</td>
+            <td>{sched["stats"]["failedTasks"]}</td>
+        </tr>''')
+
+        output('</tbody></table>')
 
 
         output('</div></div>')
@@ -1299,7 +1343,7 @@ class OpenvpnHtmlPrinter(object):
         bytes_sent = session['bytes_sent']
         output(f"<td>{session['username']!s}</td>")
         output(f"<td>{session['local_ip']!s}</td>")
-        output(f"<td>{session['remote_ip']!s}</td>")
+        # output(f"<td>{session['remote_ip']!s}</td>")
 
         if 'location' in session:
             if session['location'] == 'RFC1918':
@@ -1345,6 +1389,8 @@ class OpenvpnHtmlPrinter(object):
             if vpn_mode == 'Client':
                 self.print_client_session(vpn, session)
             elif vpn_mode == 'Server':
+                # filter out inactive clients
+                if 'last_seen' not in session or session['last_seen']==datetime.fromtimestamp(0): continue
                 self.print_server_session(vpn, vpn_id, session, show_disconnect)
             output('</tr>')
 
