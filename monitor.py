@@ -1142,7 +1142,6 @@ class OpenvpnHtmlPrinter(object):
         mupifdb_ip = mupif_monitor.cfg['mupifdb_ip']
         mupifdb_port = '' # mupif_monitor.cfg['mupifdb_port']
         mupifdb_status = mupif_monitor.cfg['mupifdb_status'].get('mupifDBStatus', "Failed")
-        mupifdbscheduler_status = mupif_monitor.cfg['mupifdb_status'].get('schedulerStatus', "Failed")
         
         
         
@@ -1185,11 +1184,16 @@ class OpenvpnHtmlPrinter(object):
                                
         output(f"               <tr\"><td>MupifDB</td><td>{mupifdb_ip!s}</td><td>{mupifdb_port!s}</td><td class=\"{trclass!s}\">{mupifdb_status!s}</td><td></td></tr>")
 
-        if (mupifdbscheduler_status == "OK"):
-            trclass = "success"
+        
+        ss=[sched['status'] for sched in mupif_monitor.scheds.values()]
+        sched_stat=', '.join(ss)
+        if set(ss)==set(['OK']): # at least one scheduler, all schedulers OK
+            trclass = 'success'
         else:
             trclass = "danger"
-        output(f"               <tr\"><td>MupifDB Scheduler</td><td></td><td></td><td class=\"{trclass!s}\">{mupifdbscheduler_status!s}</td><td>{str(mupif_monitor.cfg['mupifdb_status'].get('mupifDBSchedulerStatus', ''))!s}</td></tr>")
+            if len(ss)==0: sched_stat='[no scheduler found]'
+
+        output(f"               <tr\"><td>MupifDB Scheduler</td><td></td><td></td><td class=\"{trclass!s}\">{sched_stat}</td><td></td></tr>")
                         
         
         output('               </tr>')
