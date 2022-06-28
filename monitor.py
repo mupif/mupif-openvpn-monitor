@@ -1130,7 +1130,6 @@ class OpenvpnHtmlPrinter(object):
         output(f"<span class=\"label label-default\">{vpn['version']!s}</span>")
         output('</div></div>')
 
-
     @staticmethod
     def print_mupif_status(mupif_monitor):
         #print (str(mupif_monitor.cfg))
@@ -1143,9 +1142,6 @@ class OpenvpnHtmlPrinter(object):
         mupifdb_port = '' # mupif_monitor.cfg['mupifdb_port']
         mupifdb_status = mupif_monitor.cfg['mupifdb_status'].get('mupifDBStatus', "Failed")
         mupifdbscheduler_status = mupif_monitor.cfg['mupifdb_status'].get('schedulerStatus', "Failed")
-        
-        
-        
 
         userGroup = 'None'
         if REQUIRE_LOGIN:
@@ -1155,14 +1151,11 @@ class OpenvpnHtmlPrinter(object):
             for key in userGroup_2_userID:
                 userID = key
                 if userID == userid:
-                     userGroup = userGroup_2_userID.get(userID)
+                    userGroup = userGroup_2_userID.get(userID)
             print(userGroup)
 
-            
-
-
         output('<div class="panel panel-info">')
-        output('      <div data-toggle="collapse" class="panel-heading text-center"  data-target="#MupifStatusPanel" class="panel-heading collapsed" >')
+        output('      <div data-toggle="collapse" class="panel-heading text-center"  data-target="#MupifStatusPanel" class="panel-heading" >')
 #        output('          <button class="glyphicon glyphicon-plus-sign pull-left" data-toggle="collapse" data-target="#MupifStatusPanel"></button>')
         output('          <div class="panel-title">MuPIF Status</div>')
         output('     </div>')
