@@ -1161,7 +1161,7 @@ class OpenvpnHtmlPrinter(object):
 #        output('          <button class="glyphicon glyphicon-plus-sign pull-left" data-toggle="collapse" data-target="#MupifStatusPanel"></button>')
         output('          <div class="panel-title">MuPIF Status</div>')
         output('     </div>')
-        output('     <div id="MupifStatusPanel" class="panel-collapse collapse">')
+        output('     <div id="MupifStatusPanel" class="panel-collapse">')
         
         output('      <p>')
         ##### small nameserver table
