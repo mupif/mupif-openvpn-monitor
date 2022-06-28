@@ -382,12 +382,16 @@ class mupifMonitor(object):
         schedRec['status']='failed'
         s=datetime.now()
         try:
-            j=Pyro5.api.Proxy(uri)
-            schedRec['status']='OK'
-            schedRec['stats']=j.getStatistics()
+            j = Pyro5.api.Proxy(uri)
+            schedRec['status'] = 'OK'
+            schedRec['stats'] = j.getStatistics()
         except Pyro5.errors.CommunicationError:
-            jobmanRec['note']=f"Cannot connect to scheduler {name}"
+            schedRec['status'] = 'Failed'
+        except Exception as e:
+            schedRec['status'] = 'Failed'
+
         schedRec['note']+="["+str(datetime.now()-s)+"]"
+
 
 class WireguardMgmtInterface(object):
     def __init__(self,cfg):
