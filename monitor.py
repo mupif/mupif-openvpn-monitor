@@ -304,7 +304,7 @@ class mupifMonitor(object):
         jobmanRec['note']=''
         jobmanRec['numberofrunningjobs']=''
         jobmanRec['showJobs'] = 'ON'
-        jobmanRec['totalJobs']='?'
+        jobmanRec['totalJobs']='? total'
         try:
             j = Pyro5.api.Proxy(uri)
             # j._pyroHmacKey = hmackey
@@ -313,7 +313,7 @@ class mupifMonitor(object):
             try:
                 statusex=j.getStatusExtended()
                 status=statusex['currJobs']
-                jobmanRec['totalJobs']=status['totalJobs']
+                jobmanRec['totalJobs']=str(statusex['totalJobs'])+' total'
             # older JobManager without getStatusExtended
             except AttributeError:
                 status = j.getStatus()
