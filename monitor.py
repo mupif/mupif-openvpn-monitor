@@ -1276,13 +1276,18 @@ class OpenvpnHtmlPrinter(object):
 
         for name, sched in mupif_monitor.scheds.items():
             trclass='success' if sched['status']=='OK' else 'warning' # unused here
-            output(f'''        <tr><td>{name}</td><td>??</td><td>{sched["uri"]}</td>
-            <td>{sched["stats"]["runningTasks"]}</td>
-            <td>{sched["stats"]["scheduledTasks"]}</td>
-            <td>{sched["stats"]["processedTasks"]}</td>
-            <td>{sched["stats"]["finishedTasks"]}</td>
-            <td>{sched["stats"]["failedTasks"]}</td>
-        </tr>''')
+            if sched['status']=='OK':
+                assert 'stats' in sched
+                output(f'''
+                <tr><td>{name}</td><td>—</td><td>{sched["uri"]}</td>
+                    <td>{sched["stats"]["runningTasks"]}</td>
+                    <td>{sched["stats"]["scheduledTasks"]}</td>
+                    <td>{sched["stats"]["processedTasks"]}</td>
+                    <td>{sched["stats"]["finishedTasks"]}</td>
+                    <td>{sched["stats"]["failedTasks"]}</td>
+                </tr>''')
+            else:
+                output(f'<tr><td>{name}</td><td>—</td><td>{sched["uri"]}</td>'+5*'<td>?</td>'+'</tr>')
 
         output('</tbody></table>')
 
