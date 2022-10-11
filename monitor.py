@@ -192,10 +192,10 @@ class MupifConfigLoader(object):
 
     def load_default_settings(self):
         info('Using default settings')
-        self.mupif = {'nameserver_ip': '172.30.0.1',
+        self.mupif = {'nameserver_ip': '127.0.0.1',
                       'nameserver_port': '9090',
-                      'mupifdb_ip': '172.30.0.1', # mupifDB rest API
-                      'mupifdb_port': '5000'}
+                      'mupifdb_ip': '127.0.0.1',  # mupifDB rest API
+                      'mupifdb_port': '8005'}
 
     def parse_mupif_section(self, config):
         global_vars = ['nameserver_ip', 'nameserver_port', 'mupifdb_ip', 'mupifdb_port']
@@ -223,9 +223,6 @@ class MupifConfigLoader(object):
                 jobman[option] = None
         if args.debug:
             debug(f"=== begin section\n{jobman!s}\n=== end section")
-
-
-
 
 
 class mupifMonitor(object):
@@ -275,72 +272,66 @@ class mupifMonitor(object):
                 #print ("Request time: %s"%str(end-start))
 
     def collect_data(self):
-        #print('collect_data called')
-        #print (str(self.cfg))
-        self.ns_socket_connect(nshost=self.cfg['nameserver_ip'],nsport=self.cfg['nameserver_port'])
+        # print('collect_data called')
+        # print (str(self.cfg))
+        self.ns_socket_connect(nshost=self.cfg['nameserver_ip'], nsport=self.cfg['nameserver_port'])
         try:
-            #print("Querying mupifDB status:\n")
-            ip=self.cfg['mupifdb_ip']
-            req='http://'+(f'[{ip}]' if ':' in ip else ip)+":"+self.cfg['mupifdb_port']+'/main?action=get_status'
-            #print(req)
-            r=requests.get(req)
-            #print("url:",  r.url)
-            #print("Text:", r.text)
-            status=r.json()
-            #print(status)
-            
-            self.cfg['mupifdb_status'] = status['result']
+            # print("Querying mupifDB status:\n")
+            ip = self.cfg['mupifdb_ip']
+            req = 'http://'+(f'[{ip}]' if ':' in ip else ip)+":"+self.cfg['mupifdb_port']+'/status/'
+            # print(req)
+            r = requests.get(req)
+            # print("url:",  r.url)
+            # print("Text:", r.text)
+            status = r.json()
+            # print(status)
+            self.cfg['mupifdb_status'] = status
         except:
             self.cfg['mupifdb_status'] = {}
-            
-        
-        
 
     def collect_jobman_data(self, name, uri, jobmanRec):
 
         s = datetime.now()
 
-        jobmanRec['status']='Failed'
-        jobmanRec['note']=''
-        jobmanRec['numberofrunningjobs']=''
+        jobmanRec['status'] = 'Failed'
+        jobmanRec['note'] = ''
+        jobmanRec['numberofrunningjobs'] = ''
         jobmanRec['showJobs'] = 'ON'
-        jobmanRec['totalJobs']='? total'
+        jobmanRec['totalJobs'] = '? total'
         try:
             j = Pyro5.api.Proxy(uri)
             # j._pyroHmacKey = hmackey
 
-            sig=j.getApplicationSignature()
+            sig = j.getApplicationSignature()
             try:
-                statusex=j.getStatusExtended()
-                status=statusex['currJobs']
-                jobmanRec['totalJobs']=str(statusex['totalJobs'])+' total'
+                statusex = j.getStatusExtended()
+                status = statusex['currJobs']
+                jobmanRec['totalJobs'] = str(statusex['totalJobs'])+' total'
             # older JobManager without getStatusExtended
             except AttributeError:
                 status = j.getStatus()
 
-            #sig = 'KO'
+            # sig = 'KO'
 
-            jobmanRec['status']="OK"
-            jobmanRec['note']=sig
+            jobmanRec['status'] = "OK"
+            jobmanRec['note'] = sig
             
-            #status = j.getStatus()
+            # status = j.getStatus()
             
-            #info(status)
-            #print(status)
-            jobmanRec['numberofrunningjobs']=len(status)
-                                                             
+            # info(status)
+            # print(status)
+            jobmanRec['numberofrunningjobs'] = len(status)
 
         except Pyro5.errors.CommunicationError:
-            jobmanRec['note']=f"Cannot connect to jobManager {name}"
+            jobmanRec['note'] = f"Cannot connect to jobManager {name}"
             
-        jobmanRec['note']+="["+str(datetime.now()-s)+"]"
+        jobmanRec['note'] += "["+str(datetime.now()-s)+"]"
         return
-
 
     def ns_socket_connect(self, nshost, nsport):
         timeout = 3
         self.s = False
-        self.cfg['error']=""
+        self.cfg['error'] = ""
         try:
             self.s = socket.create_connection((nshost, nsport), timeout)
             if self.s:
@@ -366,21 +357,20 @@ class mupifMonitor(object):
             self.cfg['ns_status'] = 'Failed'
             return
 
-
         try:
-            self.ns=Pyro5.api.locate_ns(host=nshost, port=int(nsport))
-            self.cfg['ns_status']="OK"
+            self.ns = Pyro5.api.locate_ns(host=nshost, port=int(nsport))
+            self.cfg['ns_status'] = "OK"
         except Exception:
-            self.cfg['ns_status']="Failed"
+            self.cfg['ns_status'] = "Failed"
             self.cfg['error'] = f"Pyro5.api.locate_ns failed for NameServer on {nshost}:{nsport}"
     
     def _socket_recv(self, length):
         return self.s.recv(length).decode('utf-8')
 
     def collect_sched_data(self, name, uri, schedRec):
-        schedRec['note']=''
-        schedRec['status']='failed'
-        s=datetime.now()
+        schedRec['note'] = ''
+        schedRec['status'] = 'failed'
+        s = datetime.now()
         try:
             j = Pyro5.api.Proxy(uri)
             schedRec['status'] = 'OK'
@@ -390,7 +380,7 @@ class mupifMonitor(object):
         except Exception as e:
             schedRec['status'] = 'Failed'
 
-        schedRec['note']+="["+str(datetime.now()-s)+"]"
+        schedRec['note'] += "["+str(datetime.now()-s)+"]"
 
 
 class WireguardMgmtInterface(object):
@@ -1136,18 +1126,15 @@ class OpenvpnHtmlPrinter(object):
 
     @staticmethod
     def print_mupif_status(mupif_monitor):
-        #print (str(mupif_monitor.cfg))
+        # print (str(mupif_monitor.cfg))
         ns_ip = mupif_monitor.cfg['nameserver_ip']
         ns_port = mupif_monitor.cfg['nameserver_port']
         ns_status = mupif_monitor.cfg['ns_status']
         ns_note = mupif_monitor.cfg['error']
 
         mupifdb_ip = mupif_monitor.cfg['mupifdb_ip']
-        mupifdb_port = '' # mupif_monitor.cfg['mupifdb_port']
+        mupifdb_port = ''  # mupif_monitor.cfg['mupifdb_port']
         mupifdb_status = mupif_monitor.cfg['mupifdb_status'].get('mupifDBStatus', "Failed")
-
-        
-        
 
         userGroup = 'None'
         if REQUIRE_LOGIN:
@@ -1177,13 +1164,12 @@ class OpenvpnHtmlPrinter(object):
         else:
             trclass = "danger"
         output(f'               <tr"><td>Nameserver</td><td>{ns_ip!s}</td><td>{ns_port!s}</td><td class="{trclass!s}">{ns_status!s}</td><td>{ns_note!s}</td></tr>')
-        if (mupifdb_status == "OK"):
+        if mupifdb_status == "OK":
             trclass = "success"
         else:
             trclass = "danger"
                                
         output(f"               <tr\"><td>MupifDB</td><td>{mupifdb_ip!s}</td><td>{mupifdb_port!s}</td><td class=\"{trclass!s}\">{mupifdb_status!s}</td><td></td></tr>")
-
 
         ss=[sched['status'] for sched in mupif_monitor.scheds.values()]
         sched_stat=', '.join(ss)
@@ -1194,13 +1180,11 @@ class OpenvpnHtmlPrinter(object):
             if len(ss)==0: sched_stat='[no scheduler found]'
 
         output(f"               <tr\"><td>MupifDB Scheduler</td><td></td><td></td><td class=\"{trclass!s}\">{sched_stat}</td><td></td></tr>")
-                        
-        
+
         output('               </tr>')
         output('           </tbody>')
         output('      </table>')
         output('      </p>')
-
 
         ### table for job managers
         output('<input class="form-control" id="searchJobManTable" type="text" placeholder="Search..">')
@@ -1213,13 +1197,13 @@ class OpenvpnHtmlPrinter(object):
         output('         <tbody>')
         index = 0
         for name, jobman in mupif_monitor.jobmans.items():
-            if (jobman['status'] == "OK"):
+            if jobman['status'] == "OK":
                 trclass = "success"
             else:
                 trclass = "warning"
-                #@todo: check the rights for each job man and show the delte button if appropriate
-            #print(jobman['note'])
-            #print(jobman['numberofrunningjobs'])
+                # @todo: check the rights for each job man and show the delte button if appropriate
+            # print(jobman['note'])
+            # print(jobman['numberofrunningjobs'])
             if(jobman['status'] == "OK" and jobman['numberofrunningjobs'] > 0):
                 index = index+1
                 if(userGroup == name or userGroup == 'CTU' ):
