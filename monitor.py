@@ -1227,7 +1227,7 @@ class OpenvpnHtmlPrinter(object):
                 # newer version will return dict, which is what we try first
                 status = jobMan.getStatus()
                 for rec in status:
-                    try: jobid,running,user,uri=status['key'],status['running'],status['user'],status['uri']
+                    try: jobid,running,user,uri=rec['key'],rec['running'],rec['user'],rec['uri']
                     except TypeError: jobid,running,user,uri=rec[0],rec[1],rec[2],rec[3]
                     #print(jobid)
                     mins = running//60
