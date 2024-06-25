@@ -470,7 +470,7 @@ class WireguardMgmtInterface(object):
                         session['latitude'] = gir['latitude']
             else: session['remote_ip']='<unknown>'
 
-            session['local_ip']=peerData['allowedIps'][0:1] or '???'
+            session['local_ip']=(peerData['allowedIps'][0:1] or ['???'])[0]
             session['bytes_recv']=peerData.get('transferRx',0)
             session['bytes_sent']=peerData.get('transferTx',0)
             session['connected_since']=datetime.utcfromtimestamp(0)
